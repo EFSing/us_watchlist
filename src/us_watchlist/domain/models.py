@@ -20,6 +20,7 @@ class PriceBasis(StrEnum):
     RAW = "raw"
     ADJUSTED = "adjusted"
     SPLIT_ADJUSTED = "split_adjusted"
+    YAHOO_CHART_QUOTE = "yahoo_chart_quote"
 
 
 def require_utc(value: datetime) -> None:

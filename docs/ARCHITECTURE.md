@@ -46,9 +46,11 @@
 
 ## 常规时段离线 B
 
-`integrations` 将数据中台的完整候选审计还原为 IWB 名单，用归档上传时间作为可用时间。
-`app` 分别调用 `universe` 和 `market_data` 核验资格和行情后，将同一组只读快照交给
-`strategies` 的形态检查。HTML 消费逐股诊断。详细契约见 [B 离线验证](B_OFFLINE.md)。
+`integrations` 从数据中台日报读取实际 US Candidate，核对完整 IWB 审计与发布名单，
+用归档上传时间作为输入可用时间。Yahoo Chart 采集将原响应和 XNYS 会话归档到本地，
+按逐票、整批 SHA-256 绑定到离线清单。历史点时观察与外部声明的点时回放使用不同输入口径。
+`app` 通过 `universe` 和 `market_data` 核验资格和行情，将只读快照交给 `strategies`。
+HTML 消费逐股诊断。详细契约见 [B 离线验证](B_OFFLINE.md)。
 
 ## 防回归
 

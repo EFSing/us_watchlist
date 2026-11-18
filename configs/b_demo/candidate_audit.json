@@ -7,7 +7,12 @@
       "market": "US",
       "as_of_date": "2026-04-17",
       "seed_source_as_of": "2026-04-17",
-      "seed_count": 5,
+      "seed_count": 6,
+      "candidate_status": "AVAILABLE",
+      "universe_snapshot_status": "AVAILABLE",
+      "candidate_selection_outcome": "CANDIDATES_INCLUDED",
+      "candidate_included_count": 4,
+      "candidate_included_symbols": ["DEMOA", "DEMOB", "DEMOC", "DEMOD"],
       "candidate_records": [
         {
           "market": "US",
@@ -15,7 +20,7 @@
           "source": "iShares_IWB_OFFICIAL_HOLDINGS",
           "source_as_of": "2026-04-17",
           "lifecycle_status": "ACTIVE",
-          "included": false
+          "included": true
         },
         {
           "market": "US",
@@ -47,7 +52,15 @@
           "source": "iShares_IWB_OFFICIAL_HOLDINGS",
           "source_as_of": "2026-04-17",
           "lifecycle_status": "WHEN_ISSUED",
-          "included": true
+          "included": false
+        },
+        {
+          "market": "US",
+          "symbol": "DEMOF",
+          "source": "iShares_IWB_OFFICIAL_HOLDINGS",
+          "source_as_of": "2026-04-17",
+          "lifecycle_status": "ACTIVE",
+          "included": false
         }
       ]
     }

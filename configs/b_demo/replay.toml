@@ -10,7 +10,7 @@ max_seed_age_days = 7
 file = "candidate_audit.json"
 artifact = "synthetic:stock-data-pipeline-iwb-audit"
 uploaded_at = 2026-04-17T21:20:00Z
-sha256 = "b555adf7ac03c7bbb085776c2125397584648b86efb21e41e870deda7bc6b5c9"
+sha256 = "a047e9e834ca2c64677e8fb3177edc0b3ddb7df76744a795148d18ac4f18e813"
 
 [history]
 calendar = "calendar.csv"

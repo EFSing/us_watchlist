@@ -1,7 +1,8 @@
-"""Read a complete IWB membership projection from a pipeline report artifact."""
+"""Read the published US Candidate projection from a pipeline report artifact."""
 
 import json
 import re
+from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from io import BytesIO
@@ -16,14 +17,23 @@ ARTIFACT = re.compile(
 LIFECYCLE_STATES = {"ACTIVE", "UNLISTED_OR_NO_MARKET", "WHEN_ISSUED"}
 
 
-def read_iwb_seed(
+@dataclass(frozen=True)
+class PipelineCandidates:
+    snapshot: UniverseSnapshot
+    holdings_date: date
+    seed_count: int
+    active_count: int
+    status: str
+
+
+def read_pipeline_candidates(
     payload: bytes,
     *,
     artifact: str,
     artifact_sha256: str,
     uploaded_at: datetime,
     synthetic: bool,
-) -> UniverseSnapshot:
+) -> PipelineCandidates:
     digest = sha256(payload).hexdigest()
     if digest != artifact_sha256:
         raise ValueError("IWB artifact SHA-256 does not match the recorded checksum")
@@ -57,7 +67,12 @@ def read_iwb_seed(
     if seed_date > report_date or type(count) is not int or count <= 0 or len(records) != count:
         raise ValueError("Expected a complete dated IWB audit with one row per original seed")
 
-    members = []
+    if candidate["universe_snapshot_status"] != "AVAILABLE":
+        raise ValueError("The pipeline Candidate universe snapshot is unavailable")
+    outcome = candidate["candidate_selection_outcome"]
+    if outcome not in {"CANDIDATES_INCLUDED", "NO_CANDIDATES"}:
+        raise ValueError(f"The pipeline did not publish Candidate membership: {outcome}")
+    members = {}
     for row in records:
         if (
             row["market"] != MARKET
@@ -66,7 +81,26 @@ def read_iwb_seed(
             or row["lifecycle_status"] not in LIFECYCLE_STATES
         ):
             raise ValueError("IWB audit contains an inconsistent market, source, date or lifecycle")
-        members.append(UniverseMember(row["symbol"], active=row["lifecycle_status"] == "ACTIVE"))
-    if len({member.symbol for member in members}) != count:
-        raise ValueError("IWB audit contains duplicate canonical symbols")
-    return UniverseSnapshot(seed_date, provenance, tuple(members))
+        symbol = row["symbol"]
+        active = row["lifecycle_status"] == "ACTIVE"
+        included = row["included"]
+        if symbol in members:
+            raise ValueError("IWB audit contains duplicate canonical symbols")
+        if type(included) is not bool or (included and not active):
+            raise ValueError("Inconsistent pipeline Candidate inclusion flag")
+        members[symbol] = UniverseMember(symbol, active)
+
+    selected = candidate["candidate_included_symbols"]
+    selected_count = candidate["candidate_included_count"]
+    if (
+        type(selected) is not list or type(selected_count) is not int
+        or len(selected) != selected_count
+        or len(set(selected)) != selected_count
+        or set(selected) != {row["symbol"] for row in records if row["included"]}
+        or bool(selected) != (outcome == "CANDIDATES_INCLUDED")
+    ):
+        raise ValueError("Published Candidate count, symbol list and audit flags disagree")
+    return PipelineCandidates(
+        UniverseSnapshot(report_date, provenance, tuple(members[symbol] for symbol in sorted(selected))),
+        seed_date, count, sum(member.active for member in members.values()), candidate["candidate_status"],
+    )

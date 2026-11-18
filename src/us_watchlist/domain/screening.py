@@ -3,7 +3,11 @@
 from dataclasses import dataclass
 from datetime import date, datetime
 
-from us_watchlist.domain.models import Provenance, Signal, StrategyVersion
+from decimal import Decimal
+
+from us_watchlist.domain.models import PriceBasis, Provenance, Signal, StrategyVersion
+
+Metrics = tuple[tuple[str, str | int | float | Decimal | bool], ...]
 
 
 @dataclass(frozen=True)
@@ -12,18 +16,34 @@ class Evaluation:
     reason: str
     sessions_available: int
     signal: Signal | None = None
+    structure: Metrics = ()
+    volume: Metrics = ()
+    data_gap: str = ""
 
 
 @dataclass(frozen=True)
-class ScreeningReport:
+class ReplayEvidence:
     trade_date: date
     cutoff: datetime
     mode: str
-    strategy: StrategyVersion
+    candidate_date: date
     seed_date: date
     seed: Provenance
     seed_size: int
-    history_source: str
-    adjustments_known_at: datetime
+    active_size: int
+    candidate_size: int
+    candidate_status: str
+    history: Provenance
+    first_session: date
+    expected_sessions: int
+    calendar_source: str
+    price_basis: PriceBasis
+    adjustments_known_at: datetime | None
     input_sha256: str
+
+
+@dataclass(frozen=True)
+class ScreeningResult:
+    strategy: StrategyVersion
     evaluations: tuple[Evaluation, ...]
+    error: str | None = None

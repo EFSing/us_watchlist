@@ -12,7 +12,7 @@ from zipfile import ZipFile
 
 from us_watchlist.app.b_offline import run_b_offline
 from us_watchlist.domain.models import PriceBasis, SessionKind
-from us_watchlist.integrations.pipeline_iwb import read_iwb_seed
+from us_watchlist.integrations.pipeline_iwb import read_pipeline_candidates
 from us_watchlist.integrations.replay_input import read_replay
 from us_watchlist.market_data.quality import regular_history
 from us_watchlist.strategies.b_breakout_retest import BreakoutRetestShape
@@ -43,23 +43,25 @@ class BReplayTests(unittest.TestCase):
                 ("DEMOD", "FIRST_BREAKOUT_RETEST_FAILED", 76),
             ):
                 with self.subTest(symbol=symbol):
-                    self.assertIn(f"<td>{symbol}</td><td>{status}</td><td>{available}</td>", html)
+                    self.assertIn(f"<th scope='row'>{symbol}</th><td>{status}</td><td>{available}</td>", html)
             self.assertNotIn("DEMOE-WI", html)
-            self.assertIn("Shape matches: 1", html)
-            self.assertIn("Breakout and retest shape only · synthetic", html)
+            self.assertNotIn("DEMOF", html)
+            self.assertIn("Matches: 1", html)
+            self.assertIn("Regular session · synthetic", html)
             self.assertEqual(path, run_b_offline(CONFIG, output))
             self.assertEqual(list(path.parent.iterdir()), [path])
 
     def test_pipeline_receipt_publication_sets_cutoff_even_for_older_holdings(self):
         data = self.run_input
+        seed = data.candidates.snapshot
         with self.assertRaisesRegex(ValueError, "Universe snapshot was unavailable"):
             eligible_symbols(
-                data.seed, data.history[-1].session,
-                data.seed.provenance.available_at - timedelta(seconds=1),
+                seed, data.history[-1].session,
+                seed.provenance.available_at - timedelta(seconds=1),
             )
         self.assertIn(
             "DEMOA",
-            eligible_symbols(data.seed, data.history[-1].session, data.seed.provenance.available_at),
+            eligible_symbols(seed, data.history[-1].session, seed.provenance.available_at),
         )
 
     def test_stale_seed_and_modified_ohlcv_fail_before_publication(self):
@@ -89,7 +91,7 @@ class BReplayTests(unittest.TestCase):
             ("premarket", (replace(first, session=replace(first.session, kind=SessionKind.PRE_MARKET)),
                            *d.history[1:]), d.cutoff, d.adjustments_known_at, "only regular"),
             ("mixed", (replace(first, price_basis=PriceBasis.RAW), *d.history[1:]), d.cutoff,
-             d.adjustments_known_at, "requires split-adjusted"),
+             d.adjustments_known_at, "requires split_adjusted"),
             ("too late", d.history, d.cutoff + timedelta(days=1), d.adjustments_known_at,
              "target UTC date"),
             ("too early", d.history, d.history[-1].session.closes_at, d.history[-1].session.closes_at,
@@ -123,7 +125,7 @@ class BReplayTests(unittest.TestCase):
 class IwbAdapterTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        cls.uploaded = read_replay(CONFIG).seed.provenance.available_at
+        cls.uploaded = read_replay(CONFIG).candidates.snapshot.provenance.available_at
 
     def read(self, payload, **kwargs):
         options = dict(
@@ -132,7 +134,7 @@ class IwbAdapterTests(unittest.TestCase):
             uploaded_at=self.uploaded,
             synthetic=True,
         )
-        return read_iwb_seed(payload, **(options | kwargs))
+        return read_pipeline_candidates(payload, **(options | kwargs))
 
     def test_zip_path_reads_only_the_complete_us_audit(self):
         archive = BytesIO()
@@ -143,20 +145,33 @@ class IwbAdapterTests(unittest.TestCase):
             synthetic=False,
             artifact="https://github.com/EFSing/stock-data-pipeline/actions/runs/123/artifacts/456",
         )
-        self.assertEqual(len(seed.members), 5)
-        self.assertEqual(sum(member.active for member in seed.members), 4)
-        self.assertTrue(seed.members[0].active)  # the upstream Candidate flag is false for DEMOA
+        self.assertEqual(seed.seed_count, 6)
+        self.assertEqual(seed.active_count, 5)
+        self.assertEqual(tuple(member.symbol for member in seed.snapshot.members),
+                         ("DEMOA", "DEMOB", "DEMOC", "DEMOD"))
 
     def test_rejects_wrong_checksum_and_undated_or_incomplete_seed(self):
         payload = (DEMO / "candidate_audit.json").read_bytes()
         with self.assertRaisesRegex(ValueError, "SHA-256"):
             self.read(payload, artifact_sha256="0" * 64)
-        for key, value in (("seed_count", 6), ("seed_source_as_of", "2026-04-18")):
+        for key, value in (("seed_count", 7), ("seed_source_as_of", "2026-04-18")):
             with self.subTest(key=key):
                 report = json.loads(payload)
                 report["candidate_markets"]["US"][key] = value
                 with self.assertRaisesRegex(ValueError, "complete dated IWB audit"):
                     self.read(json.dumps(report).encode())
+
+    def test_candidate_contract_distinguishes_selection_from_incomplete_provider(self):
+        fixture = (DEMO / "candidate_audit.json").read_bytes()
+        for key, value, error in (
+            ("candidate_included_count", 5, "audit flags disagree"),
+            ("candidate_included_symbols", ["DEMOA", "DEMOB", "DEMOC", "DEMOF"], "audit flags disagree"),
+            ("candidate_selection_outcome", "DISCOVERY_FAILED", "did not publish"),
+        ):
+            with self.subTest(key=key), self.assertRaisesRegex(ValueError, error):
+                report = json.loads(fixture)
+                report["candidate_markets"]["US"][key] = value
+                self.read(json.dumps(report).encode())
 
     def test_rejects_duplicates_foreign_rows_and_early_archive_timestamp(self):
         payload = (DEMO / "candidate_audit.json").read_bytes()

@@ -12,7 +12,7 @@ Windows PowerShell
 
 ```powershell
 python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --no-cache-dir .
+.\.venv\Scripts\python.exe -m pip install --no-cache-dir ".[yahoo]"
 $env:PYTHONDONTWRITEBYTECODE = '1'
 .\.venv\Scripts\python.exe -m unittest discover -s tests -v
 .\.venv\Scripts\us-watchlist.exe smoke
@@ -22,7 +22,7 @@ macOS／Linux
 
 ```bash
 python3 -m venv .venv
-.venv/bin/python -m pip install --no-cache-dir .
+.venv/bin/python -m pip install --no-cache-dir ".[yahoo]"
 export PYTHONDONTWRITEBYTECODE=1
 .venv/bin/python -m unittest discover -s tests -v
 .venv/bin/us-watchlist smoke
@@ -38,5 +38,6 @@ fixture 指定另一个交易日／时段。
 
 安装后从项目根目录运行 `us-watchlist b-offline`。默认使用已提交的合成样本，
 预期为 1 个突破回踩形态匹配、1 个无突破、1 个历史缺口和 1 个首次突破回踩失败。
-HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。真实归档包和行情的输入格式见
+HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用上游 US Candidate，
+可选 `capture-yahoo` 冻结 Yahoo Chart 常规时段数据。归档契约、采集和历史时点标识见
 [B 离线验证](docs/B_OFFLINE.md)。

@@ -10,6 +10,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
 
+[project.optional-dependencies]
+yahoo = ["exchange-calendars==4.13.2"]
+
 [project.scripts]
 us-watchlist = "us_watchlist.app.cli:main"
 
