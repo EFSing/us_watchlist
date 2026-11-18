@@ -6,7 +6,7 @@ V1 初始化提供离线可运行的 Python 骨架。烟测以合成股票池和
 ## 从仓库根目录运行
 
 需要 Git 和 Python 3.12 或更新版本。CI 覆盖 Linux 的 3.12／3.13 和 Windows 的 3.12。
-审阅阶段使用 [`codex/v1-project-bootstrap`](https://github.com/EFSing/us_watchlist/tree/codex/v1-project-bootstrap)。
+当前审阅分支及基线见 [HANDOFF.md](HANDOFF.md)。
 
 Windows PowerShell
 
@@ -41,3 +41,9 @@ fixture 指定另一个交易日／时段。
 HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用上游 US Candidate，
 可选 `capture-yahoo` 冻结 Yahoo Chart 常规时段数据。归档契约、采集和历史时点标识见
 [B 离线验证](docs/B_OFFLINE.md)。
+
+## B+C 联合日报
+
+运行 `us-watchlist bc-offline` 生成合成单文件日报。B 与两套 C 规则分别验证
+共同数据中的历史覆盖和结构。打开 `.runtime/artifacts/bc-offline/synthetic/` 下的 HTML
+查看候选与逐股诊断。实际输入、C 规则与观察结果见 [B+C 离线日报](docs/BC_OFFLINE.md)。

@@ -29,6 +29,7 @@
 | --- | --- |
 | `.runtime/artifacts/smoke/` | 可重建 HTML。确认没有运行进程后按轮清理 |
 | `.runtime/artifacts/b-offline/` | 可重建 B 离线 HTML。合成和实际输入的输出各有子目录，停止运行后可清理 |
+| `.runtime/artifacts/bc-offline/` | 可重建 B+C 单文件离线日报。合成和实际输入按模式保存，停止运行后可清理 |
 | `.runtime/tmp/`、`.runtime/cache/` | 项目临时文件和可重建缓存。测试自动清理自己的临时目录，停止相关进程后可清理残留 |
 | `.runtime/audit/` | 临时只读审计 Git 对象。记录证据后删除本项目内此次审计所建对象库 |
 | `.runtime/research/`、`.runtime/data/` | 未来本项目 US 研究／数据的本地工作区。普通清理只处理可重建内容，保留有价值证据需单独决策 |

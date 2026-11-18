@@ -14,9 +14,9 @@ sha256 = "a047e9e834ca2c64677e8fb3177edc0b3ddb7df76744a795148d18ac4f18e813"
 
 [history]
 calendar = "calendar.csv"
-calendar_sha256 = "482c58bddce58d502701447a7ed947d40fbea66bb83d45288c7df0c01508c697"
+calendar_sha256 = "2a9a815fb85919698dcc8f3a3a95af45a761dc5cbb3af117cf90d1db00313005"
 ohlcv = "ohlcv.csv"
-ohlcv_sha256 = "217599a45afda13e1219c2a40910d691fc042d9c6d10636f375b0bfea3ea2c27"
+ohlcv_sha256 = "0f91ee6ff30768428e56a6b7cae845679d4b0482396f7bd5e3205c63344c2912"
 source = "Synthetic regular-session OHLCV"
 price_basis = "split_adjusted"
 adjustments_known_at = 2026-04-20T21:05:00Z

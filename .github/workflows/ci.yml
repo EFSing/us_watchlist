@@ -40,5 +40,7 @@ jobs:
           us-watchlist smoke
           us-watchlist b-offline
           us-watchlist b-offline
+          us-watchlist bc-offline
+          us-watchlist bc-offline
       - name: Check generated files and whitespace
         run: git diff --check
