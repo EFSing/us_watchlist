@@ -1,0 +1,22 @@
+# Synthetic weekdays, session windows, audit rows and OHLCV. No live providers.
+market = "US"
+mode = "synthetic"
+session = "regular"
+target_date = 2026-04-20
+cutoff = 2026-04-20T21:10:00Z
+max_seed_age_days = 7
+
+[iwb]
+file = "candidate_audit.json"
+artifact = "synthetic:stock-data-pipeline-iwb-audit"
+uploaded_at = 2026-04-17T21:20:00Z
+sha256 = "b555adf7ac03c7bbb085776c2125397584648b86efb21e41e870deda7bc6b5c9"
+
+[history]
+calendar = "calendar.csv"
+calendar_sha256 = "482c58bddce58d502701447a7ed947d40fbea66bb83d45288c7df0c01508c697"
+ohlcv = "ohlcv.csv"
+ohlcv_sha256 = "217599a45afda13e1219c2a40910d691fc042d9c6d10636f375b0bfea3ea2c27"
+source = "Synthetic regular-session OHLCV"
+price_basis = "split_adjusted"
+adjustments_known_at = 2026-04-20T21:05:00Z

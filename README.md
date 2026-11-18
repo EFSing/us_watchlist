@@ -33,3 +33,10 @@ export PYTHONDONTWRITEBYTECODE=1
 fixture 指定另一个交易日／时段。
 
 跨设备恢复见 [HANDOFF.md](HANDOFF.md)，依赖与输入口径见 [ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+## B 常规时段离线验证
+
+安装后从项目根目录运行 `us-watchlist b-offline`。默认使用已提交的合成样本，
+预期为 1 个突破回踩形态匹配、1 个无突破、1 个历史缺口和 1 个首次突破回踩失败。
+HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。真实归档包和行情的输入格式见
+[B 离线验证](docs/B_OFFLINE.md)。

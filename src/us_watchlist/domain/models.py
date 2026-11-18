@@ -19,6 +19,7 @@ class SessionKind(StrEnum):
 class PriceBasis(StrEnum):
     RAW = "raw"
     ADJUSTED = "adjusted"
+    SPLIT_ADJUSTED = "split_adjusted"
 
 
 def require_utc(value: datetime) -> None:
