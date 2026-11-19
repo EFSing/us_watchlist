@@ -33,6 +33,7 @@
 | `.runtime/tmp/`、`.runtime/cache/` | 项目临时文件和可重建缓存。测试自动清理自己的临时目录，停止相关进程后可清理残留 |
 | `.runtime/audit/` | 临时只读审计 Git 对象。记录证据后删除本项目内此次审计所建对象库 |
 | `.runtime/research/`、`.runtime/data/` | 未来本项目 US 研究／数据的本地工作区。普通清理只处理可重建内容，保留有价值证据需单独决策 |
+| `.runtime/data/iwb/`、`.runtime/data/iwb-daily/`、`.runtime/data/iwb-validation/` | 官方版本、真实日报和冻结证据。按跨设备恢复要求保留，禁止提交 |
 | `.venv/`、`build/`、`dist/`、`*.egg-info/` | 本机环境及 Python 工具生成物。停止相关进程后可重建 |
 
 - 任何写入都应由明确的单一写入方负责，以稳定身份实现重复执行和冲突检测。

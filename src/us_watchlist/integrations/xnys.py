@@ -1,6 +1,7 @@
 """Exchange-calendar adapter for US regular sessions."""
 
 from datetime import date, datetime
+from zoneinfo import ZoneInfo
 
 from us_watchlist.domain.models import SessionKind, SessionWindow, require_utc
 
@@ -39,3 +40,8 @@ def completed_session(now: datetime) -> date:
 
 def is_session(day: date) -> bool:
     return bool(_calendar().is_session(day.isoformat()))
+
+
+def new_york_date(now: datetime) -> date:
+    require_utc(now)
+    return now.astimezone(ZoneInfo("America/New_York")).date()

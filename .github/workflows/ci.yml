@@ -5,6 +5,7 @@ on:
   pull_request:
 
 permissions:
+  actions: read
   contents: read
 
 jobs:
@@ -42,5 +43,36 @@ jobs:
           us-watchlist b-offline
           us-watchlist bc-offline
           us-watchlist bc-offline
+      - name: Upload synthetic artifact for transport verification
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        id: iwb-transport
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ci-iwb-transport-${{ github.run_id }}-${{ github.run_attempt }}
+          path: configs/b_demo/
+          retention-days: 1
+          if-no-files-found: error
+      - name: Verify private Actions artifact download and SHA-256
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IWB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          IWB_TEST_ARTIFACT_ID: ${{ steps.iwb-transport.outputs.artifact-id }}
+          IWB_TEST_ARTIFACT_DIGEST: ${{ steps.iwb-transport.outputs.artifact-digest }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          from us_watchlist.integrations.github_artifacts import Artifact, GitHubArtifacts
+
+          source = Path('configs/b_demo')
+          restored = Path('.runtime/tmp/ci-iwb-transport')
+          names = {path.name for path in source.iterdir() if path.is_file()}
+          artifact = Artifact('ci-iwb-transport', int(os.environ['IWB_TEST_ARTIFACT_ID']),
+                              'sha256:' + os.environ['IWB_TEST_ARTIFACT_DIGEST'], int(os.environ['GITHUB_RUN_ID']))
+          GitHubArtifacts().restore(artifact, restored, names)
+          if any((source / name).read_bytes() != (restored / name).read_bytes() for name in names):
+              raise SystemExit('Restored synthetic evidence differs')
+          PY
       - name: Check generated files and whitespace
         run: git diff --check

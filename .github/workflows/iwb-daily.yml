@@ -1,0 +1,84 @@
+name: US IWB B+C Daily
+
+on:
+  # The schedule is reserved for a separately approved production enablement.
+  # schedule:
+  #   - cron: '37 17 * * 1-5'
+  #     timezone: 'America/New_York'
+  workflow_dispatch:
+    inputs:
+      trade_date:
+        description: 'Completed XNYS session YYYY-MM-DD, empty for latest'
+        type: string
+      holdings_date:
+        description: 'Exact official holdings date YYYY-MM-DD for historical recovery'
+        type: string
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: us-iwb-bc-canonical-publisher
+  cancel-in-progress: false
+
+jobs:
+  daily:
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (github.event_name == 'workflow_dispatch' || vars.US_IWB_SCHEDULE_ENABLED == 'true')
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    env:
+      PYTHONDONTWRITEBYTECODE: '1'
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: '3.12'
+      - name: Install runtime dependencies
+        run: python -m pip install --no-cache-dir ".[yahoo]"
+      - name: Restore prior evidence and observe the session
+        id: daily
+        env:
+          GH_TOKEN: ${{ github.token }}
+          IWB_DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+          REQUESTED_TRADE_DATE: ${{ inputs.trade_date }}
+          REQUESTED_HOLDINGS_DATE: ${{ inputs.holdings_date }}
+        shell: bash
+        run: |
+          args=()
+          if [[ -n "$REQUESTED_TRADE_DATE" ]]; then args+=(--trade-date "$REQUESTED_TRADE_DATE"); fi
+          if [[ -n "$REQUESTED_HOLDINGS_DATE" ]]; then args+=(--holdings-date "$REQUESTED_HOLDINGS_DATE"); fi
+          us-watchlist iwb-automation --workspace "$RUNNER_TEMP/iwb-${GITHUB_RUN_ATTEMPT}" \
+            --event "$GITHUB_EVENT_NAME" --code-sha "$GITHUB_SHA" "${args[@]}"
+      - name: Archive the new validated IWB version
+        if: ${{ !cancelled() && steps.daily.outputs.pool_file != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.daily.outputs.pool_name }}
+          path: ${{ steps.daily.outputs.pool_file }}
+          if-no-files-found: error
+          retention-days: 90
+          compression-level: 0
+      - name: Publish the canonical B+C observation
+        if: ${{ success() && steps.daily.outputs.report_dir != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.daily.outputs.report_name }}
+          path: ${{ steps.daily.outputs.report_dir }}/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Preserve attempt state and failed evidence
+        if: ${{ !cancelled() && steps.daily.outputs.diagnostic_receipt != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: us-iwb-attempt-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ steps.daily.outputs.diagnostic_receipt }}
+            ${{ steps.daily.outputs.diagnostic_attempt_1 }}
+            ${{ steps.daily.outputs.diagnostic_attempt_2 }}
+          if-no-files-found: error
+          retention-days: 7

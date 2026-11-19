@@ -20,10 +20,50 @@ from us_watchlist.universe.eligibility import eligible_symbols
 DEFAULT_POOL = Path(".runtime/data/iwb")
 HISTORY_SESSIONS = 120
 MIN_TARGET_COVERAGE_PERCENT = 95
+PUBLISHABLE = {"SUCCESS", "PARTIAL_COVERAGE"}
+RETRYABLE_COVERAGE = {"YAHOO_TARGET_COVERAGE_BELOW_FLOOR", "YAHOO_STRATEGY_HISTORY_UNAVAILABLE"}
+REPORT_FILES = {"holdings.zip", "yahoo.zip", "plan.json", "inputs.json", "report.html", "run.json"}
 
 
-def _json(value: dict) -> bytes:
+def encode_receipt(value: dict) -> bytes:
     return (json.dumps(value, sort_keys=True, indent=2, ensure_ascii=True) + "\n").encode("utf-8")
+
+
+def report_identity(target: date) -> str:
+    return f"US_{target}_regular_IWB_BC_v1"
+
+
+def verify_completed(output: Path, target: date) -> dict:
+    raw_inputs = read_artifact(output / "inputs.json")
+    inputs = json.loads(raw_inputs)
+    plan = json.loads(read_artifact(output / "plan.json"))
+    run = json.loads(read_artifact(output / "run.json"))
+    if (
+        (plan["schema"], inputs["schema"], run["schema"]) != (
+            "us_iwb_daily_plan_v1", "us_iwb_daily_inputs_v1", "us_iwb_daily_run_v1",
+        )
+        or (run["market"], run["session"], run["trade_date"], run["report_id"]) != (
+            "US", "regular", target.isoformat(), report_identity(target),
+        )
+        or any(inputs.get(key) != value for key, value in plan.items() if key != "schema")
+        or any(run.get(key) != value for key, value in inputs.items() if key != "schema")
+        or run["status"] not in PUBLISHABLE
+        or run["listed_equities"] <= 0
+        or not run["listed_equities"] * MIN_TARGET_COVERAGE_PERCENT <= run["target_bars"] * 100 <= run["listed_equities"] * 100
+    ):
+        raise ValueError(f"IWB_ARCHIVED_RUN_RECEIPT_MISMATCH {target}")
+    if sha256(raw_inputs).hexdigest() != run["input_sha256"]:
+        raise ValueError("IWB_ARCHIVED_INPUT_SHA_MISMATCH")
+    for name, key in (("yahoo.zip", "yahoo_zip_sha256"), ("holdings.zip", "holdings_zip_sha256"),
+                      ("report.html", "report_sha256")):
+        if sha256(read_artifact(output / name)).hexdigest() != run[key]:
+            raise ValueError(f"IWB_ARCHIVED_FILE_SHA_MISMATCH {name}")
+    holdings = read_holdings(output / "holdings.zip")
+    if (holdings.day.isoformat(), holdings.snapshot.provenance.snapshot_id) != (
+        run["holdings_date"], run["holdings_csv_sha256"],
+    ):
+        raise ValueError("IWB_ARCHIVED_POOL_RECEIPT_MISMATCH")
+    return run
 
 
 def update_pool(root: Path, requested: date | None) -> dict:
@@ -73,7 +113,7 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
     symbols = eligible_symbols(snapshot, session, now)
     plan = {
         "schema": "us_iwb_daily_plan_v1", "market": "US", "trade_date": target.isoformat(), "session": "regular",
-        "report_id": f"US_{target}_regular_IWB_BC_v1", "code_sha": code_sha,
+        "report_id": report_identity(target), "code_sha": code_sha,
         "holdings_date": holdings.day.isoformat(), "holdings_source": snapshot.provenance.source,
         "holdings_available_at": snapshot.provenance.available_at.isoformat(),
         "holdings_csv_sha256": snapshot.provenance.snapshot_id,
@@ -83,7 +123,7 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
         "excluded_non_equity_rows": holdings.non_equity_rows, "inactive_equities": dict(holdings.inactive),
         "history_sessions": HISTORY_SESSIONS, "minimum_target_coverage_percent": MIN_TARGET_COVERAGE_PERCENT,
     }
-    publish_once(output / "plan.json", _json(plan))
+    publish_once(output / "plan.json", encode_receipt(plan))
     quote_path = output / "yahoo.zip"
     if not quote_path.is_file():
         capture_yahoo(quote_path, target, symbols, snapshot.provenance, HISTORY_SESSIONS, official_iwb=True)
@@ -99,7 +139,7 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
         "observed_at": observed.isoformat(), "calendar": calendar,
         "session_close_utc": session.closes_at.isoformat(),
     }
-    input_payload = _json(inputs_record)
+    input_payload = encode_receipt(inputs_record)
     input_sha = sha256(input_payload).hexdigest()
     publish_once(output / "inputs.json", input_payload)
     pool_data = ScreeningUniverse(snapshot, holdings.day, len(snapshot.members), len(symbols), "LOCAL_IWB")
@@ -117,6 +157,8 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
         status = "FAILED_STRATEGY"
     elif not coverage_ok:
         status = "YAHOO_TARGET_COVERAGE_BELOW_FLOOR"
+    elif any(all(row.reason == "INCOMPLETE_HISTORY" for row in result.evaluations) for result in (b, *c)):
+        status = "YAHOO_STRATEGY_HISTORY_UNAVAILABLE"
     else:
         status = "PARTIAL_COVERAGE" if partial else "SUCCESS"
     evidence = replace(evidence, iwb=IwbReportEvidence(
@@ -135,5 +177,5 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
             "evaluated": len(result.evaluations), "error": result.error,
         } for result in (b, *c)},
     }
-    publish_once(output / "run.json", _json(run))
+    publish_once(output / "run.json", encode_receipt(run))
     return run

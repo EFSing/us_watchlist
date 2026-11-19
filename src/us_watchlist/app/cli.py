@@ -8,8 +8,10 @@ from pathlib import Path
 
 from us_watchlist.app.b_offline import run_b_offline
 from us_watchlist.app.bc_offline import run_bc_offline
-from us_watchlist.app.iwb_daily import DEFAULT_POOL, observe_iwb, update_pool
+from us_watchlist.app.iwb_automation import automate_iwb
+from us_watchlist.app.iwb_daily import DEFAULT_POOL, PUBLISHABLE, observe_iwb, update_pool, verify_completed
 from us_watchlist.app.smoke import run_smoke
+from us_watchlist.integrations.github_artifacts import GitHubArtifacts, write_workflow_outputs
 from us_watchlist.integrations.replay_input import yahoo_capture_request
 from us_watchlist.integrations.yahoo_chart import capture_yahoo
 
@@ -34,6 +36,15 @@ def main() -> int:
     daily.add_argument("--pool-dir", type=Path, default=DEFAULT_POOL)
     daily.add_argument("--output", type=Path, required=True)
     daily.add_argument("--code-sha")
+    verify = subcommands.add_parser("iwb-verify", help="Verify the receipts and hashes in an archived IWB report")
+    verify.add_argument("--trade-date", type=date.fromisoformat, required=True)
+    verify.add_argument("--directory", type=Path, required=True)
+    automation = subcommands.add_parser("iwb-automation", help="Run one repository Actions observation")
+    automation.add_argument("--workspace", type=Path, required=True)
+    automation.add_argument("--event", choices=("schedule", "workflow_dispatch"), required=True)
+    automation.add_argument("--trade-date", type=date.fromisoformat)
+    automation.add_argument("--holdings-date", type=date.fromisoformat)
+    automation.add_argument("--code-sha", required=True)
     args = parser.parse_args()
 
     try:
@@ -50,7 +61,20 @@ def main() -> int:
         elif args.command == "iwb-report":
             run = observe_iwb(args.trade_date, args.pool_dir, args.output, args.code_sha)
             print(json.dumps(run, ensure_ascii=True))
-            return int(run["status"] not in {"SUCCESS", "PARTIAL_COVERAGE"})
+            return int(run["status"] not in PUBLISHABLE)
+        elif args.command == "iwb-verify":
+            run = verify_completed(args.directory, args.trade_date)
+            print(f"{run['report_id']} · {run['status']} · SHA-256 {run['report_sha256']}")
+        elif args.command == "iwb-automation":
+            state, outputs = automate_iwb(
+                args.workspace, GitHubArtifacts(), args.code_sha, scheduled=args.event == "schedule",
+                trade_date=args.trade_date, holdings_date=args.holdings_date,
+            )
+            write_workflow_outputs(outputs)
+            print(json.dumps(state, ensure_ascii=True))
+            return int(state["status"] not in PUBLISHABLE | {
+                "REUSED_PUBLISHED_REPORT", "SKIPPED_NOT_READY", "SKIPPED_XNYS_CLOSED",
+            })
         else:
             print(run_smoke(args.config, Path(".runtime/artifacts/smoke")))
     except (OSError, ImportError, KeyError, TypeError, ValueError, DecimalException) as error:
