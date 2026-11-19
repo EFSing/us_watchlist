@@ -149,9 +149,17 @@ def _plan(row: CandidateResearch, *, is_b: bool) -> str:
         ("触发", plan.trigger), ("止损", plan.stop), ("目标", plan.target),
     ))
     entry = "信号日收盘与触发价取高者" if is_b else "C 模拟触发价"
+    stop_risk = ""
+    if not is_b:
+        inputs = dict(trade.inputs)
+        stop_risk = (f'\n<p class="note">至止损距离 · 参考入场 {inputs["risk_to_entry"]:.2%}'
+                     f' · 信号日收盘 {inputs["risk_to_close"]:.2%}</p>')
+        if inputs["stop_risk_warning"]:
+            stop_risk += (f'\n<p class="note"><strong>研究风险警示</strong> · 至止损距离超过'
+                          f' {inputs["stop_risk_warning_threshold"]:.0%}。</p>')
     return f"""<div class="watch-facts"><strong>参考计划（未验证）</strong>{eligibility}
 <dl class="plan-prices">{prices}<div><dt>计划 RR</dt><dd>{plan.rr:.2f} 倍</dd></div></dl>
-<p class="note">参考入场 ${plan.entry:,.2f}（{entry}） · 目标依据为{_TARGET[plan.target_rule]}。</p>
+<p class="note">参考入场 ${plan.entry:,.2f}（{entry}） · 目标依据为{_TARGET[plan.target_rule]}。</p>{stop_risk}
 <p class="note">信号日收盘后生成，供下一交易日起参考。RR 以显示价位计算，费用、滑点及实际成交未计入。</p></div>"""
 
 
