@@ -9,6 +9,7 @@ from io import BytesIO
 from pathlib import Path
 from time import sleep
 from urllib.error import HTTPError, URLError
+from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from zipfile import BadZipFile, ZipFile
 
@@ -40,7 +41,12 @@ class GitHubArtifacts:
         })
         # The archive URL redirects to a signed storage URL. Keep credentials at api.github.com.
         request.add_unredirected_header("Authorization", f"Bearer {self.token}")
-        for attempt in range(2):
+        download = url.endswith("/zip")
+        transient_codes = {429, 500, 502, 503, 504}
+        if download:
+            # Newly finalized uploads can surface in the REST download endpoint after a short delay.
+            transient_codes.add(404)
+        for delay in ((2, 6, None) if download else (3, None)):
             try:
                 with urlopen(request, timeout=25) as response:
                     payload = response.read(MAX_ARTIFACT_BYTES + 1)
@@ -48,12 +54,13 @@ class GitHubArtifacts:
                     raise ValueError("GITHUB_ARTIFACT_TOO_LARGE")
                 return payload
             except HTTPError as error:
-                if attempt or error.code not in {429, 500, 502, 503, 504}:
-                    raise ValueError(f"GITHUB_ARTIFACT_HTTP_{error.code}") from None
+                if delay is None or error.code not in transient_codes:
+                    endpoint = "API" if urlsplit(error.geturl()).hostname == "api.github.com" else "STORAGE"
+                    raise ValueError(f"GITHUB_ARTIFACT_{endpoint}_HTTP_{error.code}") from None
             except (URLError, TimeoutError, OSError) as error:
-                if attempt:
+                if delay is None:
                     raise ValueError(f"GITHUB_ARTIFACT_NETWORK_{type(error).__name__}") from None
-            sleep(3)
+            sleep(delay)
         raise AssertionError("GitHub request exhausted its retry loop")
 
     def catalog(self) -> dict[str, Artifact]:

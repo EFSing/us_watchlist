@@ -6,6 +6,7 @@ from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
+from urllib.error import HTTPError
 from zipfile import ZipFile
 
 from test_iwb_daily import HoldingsResponse, ROOT, TARGET, holdings
@@ -34,6 +35,22 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(_target(datetime(2025, 11, 29, 1, 0, tzinfo=UTC), True, None), (TARGET, None))
         with self.assertRaisesRegex(ValueError, "MANUAL_TARGET_REQUIRES_COMPLETED"):
             _target(datetime(2025, 11, 28, 17, 55, tzinfo=UTC), False, TARGET)
+
+    def test_download_retries_recent_unavailable_artifact_without_exposing_token(self):
+        env = {"GITHUB_REPOSITORY": "example/example", "IWB_DEFAULT_BRANCH": "main", "GH_TOKEN": "test-token"}
+        with patch.dict("os.environ", env):
+            archive = GitHubArtifacts()
+        url = f"{archive.root}/1/zip"
+        error = HTTPError(url, 404, "Not Found", {}, None)
+        with (
+            patch("us_watchlist.integrations.github_artifacts.urlopen", side_effect=(error, BytesIO(b"present"))) as request,
+            patch("us_watchlist.integrations.github_artifacts.sleep") as delay,
+        ):
+            self.assertEqual(archive._read(url), b"present")
+        self.assertEqual(request.call_count, 2)
+        self.assertNotIn("Authorization", request.call_args.args[0].headers)
+        self.assertIn("Authorization", request.call_args.args[0].unredirected_hdrs)
+        delay.assert_called_once_with(2)
 
     def test_retry_retains_failed_attempt_and_uses_same_restored_pool(self):
         pool_name = POOL_PREFIX + "2025-11-26"
