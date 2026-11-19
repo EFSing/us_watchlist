@@ -1,14 +1,15 @@
-# 独立 IWB 收盘日报审阅运行
+# 独立 IWB 收盘研究日报
 
-[日报工作流](../.github/workflows/iwb-daily.yml) 提供默认分支手动补跑。定时草稿使用 GitHub Actions 原生
-`America/New_York`，周一至周五 17:37 对应夏令时 21:37 UTC、标准时 22:37 UTC。实际执行须经独立批准，
-并把仓库变量 `US_IWB_SCHEDULE_ENABLED` 设为 `true`。变量缺失或为 `false` 时跳过日报作业，手动入口仍可用。
+[日报工作流](../.github/workflows/iwb-daily.yml) 提供默认分支手动补跑和 GitHub Actions 原生定时。
+`America/New_York` 周一至周五 17:37 对应夏令时 21:37 UTC、标准时 22:37 UTC。
+仓库变量 `US_IWB_SCHEDULE_ENABLED=true` 放行定时作业，变量缺失或为 `false` 时跳过定时作业。
 两种作业共用串行发布组，令牌仅有 `actions: read` 和 `contents: read`，流程只获取输入并发布私有归档。
 [GitHub 调度语法](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
 定时事件根据 GitHub API 的原始 `created_at` 锁定纽约目标日，无手动日期参数。XNYS 休市记为
-`SKIPPED_XNYS_CLOSED`，开市日采用该会话的常规收盘时刻，短市同样等待至少 30 分钟。纽约当日晚到的作业可以运行，
-跨过纽约午夜时记录 `SKIPPED_SCHEDULE_EXPIRED` 并以失败结论结束。提前触发或未达收盘等待时间记为
+`SKIPPED_XNYS_CLOSED`，开市日采用该会话的常规收盘时刻，短市同样等待至少 30 分钟。作业启动、
+每轮采集启动及 Yahoo 采集完成均须在纽约目标日。跨日记为 `SKIPPED_SCHEDULE_EXPIRED`，保留已取得的诊断。
+提前触发或未达收盘等待时间记为
 `SKIPPED_NOT_READY`。GitHub 可能延迟创建或丢弃事件，`created_at` 是原始运行创建时间，验收时与预定时刻分别核对。
 
 新定时采集逐股要求目标日有效 OHLCV、正确的常规会话和已冻结的响应时间。Yahoo `regularMarketTime` 须属于纽约目标日，
@@ -17,14 +18,20 @@
 
 ## 首次定时验收
 
-1. 合并后在 `main` 核对日报工作流及 CI。若有变量关闭期间的计划事件，核对日报作业为跳过且无产物。
-   获准开启仓库变量后，等待下一个正常 XNYS 会话的 17:37 自然触发，记录工作流 URL、`event=schedule`、HEAD、
-   预定时刻、GitHub 创建时刻、runner 实际开始时刻及纽约目标日。该日保留给计划任务生成首份规范日报。
-2. 从 `workflow.json` 和 `run.json` 核对同日、实际收盘、至少 30 分钟间隔及采集时间。核对 IWB 版本及可用时间、
-   目标日有效 OHLCV 至少 95%、120 日完整历史覆盖、B／C 均衡／C 保守各自的匹配和历史不足、SNDK 及其他逐股缺口。
-   对有重试的运行，核对首次失败输入、下一轮采集时间和最终状态。合成 CI 的验证为工程行为，真实验收需要该日的新采集。
-3. 下载规范日报、诊断收据及本次新发布或引用的成份归档，校验 SHA-256、`iwb-verify`、HTML 审计及报告身份。
-   核对作业步骤仅处理数据、日报与归档。记录未发通知、无 IBKR 调用。命中已有归档的运行可验证恢复，首次前瞻验收仍需下一次新采集。
+1. 核对默认分支 `main`、精确提交的 push CI 已成功、日报工作流为 active，回读仓库变量为 `true`。
+   若有变量关闭期间的计划事件，核对日报作业跳过且无产物。
+2. 等待下一个正常 XNYS 会话的 17:37 自然触发。记录运行 URL、`run_id`、`run_attempt`、`event=schedule`、
+   默认分支、代码 SHA、纽约目标日、预定时刻、GitHub 原始创建时刻和 runner 实际开始时刻。保留该日给定时作业生成规范日报。
+3. 从 `workflow.json`、`run.json` 及 `yahoo.zip` 的 `manifest.json` 核对 XNYS 实际收盘、至少 30 分钟等待期、
+   同一纽约交易日的采集起止时刻、逐股响应时刻与 Yahoo `regularMarketTime`。记录 IWB 版本、来源及实际可用时刻。
+   如有重试，核对前一轮失败原因、证据、重采时刻和最终状态。
+4. 核对目标日有效 OHLCV 至少 95%，分别记录 120 日完整历史覆盖、B／C 均衡／C 保守的匹配数和历史不足数。
+   从 HTML 审计与运行收据逐股核对 SNDK（如适用）和其他异常。接受符合发布条件的 `SUCCESS` 或
+   `PARTIAL_COVERAGE`，保留缺口及各规则资格。参考计划、量能、2→3 结构和 C 止损距离以未验证的研究观察展示。
+5. 下载规范日报、尝试诊断及本次新发布或引用的成份 ZIP，记录产物名称、ID、来源运行及保留期。
+   用 Actions 提供的 digest 核对 ZIP SHA-256，用 `iwb-verify` 核对报告身份、输入、HTML、官方成份与 Yahoo ZIP 的 SHA-256。
+   核对作业步骤限于采集、研究日报和私有归档，并记录通知、IBKR 调用及真实订单均未发生。命中已有归档可验证恢复，
+   首次前瞻验收须取得该日的新采集。
 
 若没有 `schedule` 运行、作业失败或未发布，先核对变量、工作流版本、队列、XNYS 状态及诊断。记录未完成的定时验收，
 获准后按下节指定该交易日补跑，并保留真实取得时刻。补跑属于事后观察，另选交易日完成自然触发验收。
@@ -54,11 +61,15 @@ us-watchlist iwb-verify --trade-date 2026-11-18 --directory .runtime/data/iwb-da
 ```
 
 幂等复用与跨设备下载覆盖产物可访问期。过期后可从同一用户保留的副本核验，作长期存储须另行批准。
-定时执行开关保持关闭。[GitHub 产物保留说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/remove-workflow-artifacts)
+每次恢复以 [仓库变量实际值](https://github.com/EFSing/us_watchlist/settings/variables/actions) 和
+[日报工作流状态](https://github.com/EFSing/us_watchlist/actions/workflows/iwb-daily.yml) 为准。
+[GitHub 产物保留说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/remove-workflow-artifacts)
 
 ## 长期前瞻研究证据
 
-保持 90／30／7 天 Actions 保留期。建议获准后由一名维护者每周在诊断到期前从私有归档导出，每月封存并抽样恢复。
+保持 90／30／7 天 Actions 保留期。由一名维护者每周在最早一份 7 天诊断到期前导出并校验私有归档，覆盖上次导出以来的
+所有交易日及失败运行。导出的证据先存项目本地 `.runtime/data/iwb-validation/`。每月按纽约交易月汇总证据和
+SHA-256 清单，在经批准的私有位置封存，并抽样下载核对哈希与可恢复性。月度清单记录缺日、失败和已保全的完整输入。
 逐日文件用规范报告身份及输入／报告 SHA-256 去重，同内容复用，异内容报冲突。缺失或失败的交易日单独留收据和失败原因。
 
 - 精简证据为压缩 JSON 和 SHA-256 清单。保留交易日、预定／启动／采集时间、事件类型、运行 URL、代码 SHA、
@@ -69,7 +80,7 @@ us-watchlist iwb-verify --trade-date 2026-11-18 --directory .runtime/data/iwb-da
   精简记录可追踪当时筛选，完整复算需要保存相同输入原件。
 - 长期位置优先使用现有私有 GitHub 仓库月度 Release 资产，需用户批准研究数据访问范围和发布方式。若现有设置启用了
   immutable releases，可在发布完该月资产后锁定。如暂未批准或不可用，使用经批准的现有私有备份，由清单和恢复校验验证字节一致性。
-  此 PR 保持 Actions 只读权限，未配置长期写入、付费存储或仓库权限变更。
+  Actions 保持只读权限。长期写入、付费存储及仓库权限变更另行授权。
   [GitHub Release 资产限制](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas) · [不可变 Release](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
 
 ## 2026-11-18 hosted runner 验收

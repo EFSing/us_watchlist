@@ -107,14 +107,20 @@ def _execute(
     pool = workspace / "pool"
     _prepare_pool(archive, catalog, pool, target, holdings_date, current, state, outputs)
     for attempt in range(1, 3):
+        started = datetime.now(UTC)
+        if scheduled and new_york_date(started) != target:
+            return "SKIPPED_SCHEDULE_EXPIRED"
         output = workspace / f"attempt-{attempt}"
-        record = {"attempt": attempt, "started_at": datetime.now(UTC).isoformat()}
+        record = {"attempt": attempt, "started_at": started.isoformat()}
         state["attempts"].append(record)
         outputs[f"diagnostic_attempt_{attempt}"] = str(output)
         run = observe_iwb(target, pool, output, code_sha, require_yahoo_close=scheduled)
         outcome = run["status"]
         record.update({"status": outcome, "yahoo_zip_sha256": run["yahoo_zip_sha256"],
                        "holdings_csv_sha256": run["holdings_csv_sha256"], "target_bars": run["target_bars"]})
+        if scheduled and new_york_date(datetime.fromisoformat(run["observed_at"])) != target:
+            record["status"] = "SKIPPED_SCHEDULE_EXPIRED"
+            return record["status"]
         if outcome in PUBLISHABLE:
             verify_completed(output, target)
             record["report_sha256"] = run["report_sha256"]

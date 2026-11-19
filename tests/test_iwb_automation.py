@@ -134,7 +134,7 @@ class AutomationTests(unittest.TestCase):
         created = datetime(2025, 11, 28, 22, 37, tzinfo=UTC)
         archive.schedule_created_at.return_value = created
         unavailable = {"status": "YAHOO_TARGET_COVERAGE_BELOW_FLOOR", "yahoo_zip_sha256": "1" * 64,
-                       "holdings_csv_sha256": "a" * 64, "target_bars": 0}
+                       "holdings_csv_sha256": "a" * 64, "target_bars": 0, "observed_at": created.isoformat()}
         with (
             patch("us_watchlist.app.iwb_automation.datetime", wraps=datetime) as clock,
             patch("us_watchlist.app.iwb_automation._prepare_pool"),
@@ -151,6 +151,36 @@ class AutomationTests(unittest.TestCase):
         self.assertIn("diagnostic_attempt_1", outputs)
         self.assertIn("diagnostic_attempt_2", outputs)
         self.assertNotIn("report_name", outputs)
+
+    def test_schedule_expires_if_capture_or_retry_crosses_new_york_midnight(self):
+        archive = Mock(spec=GitHubArtifacts)
+        archive.catalog.return_value = {}
+        archive.schedule_created_at.return_value = datetime(2025, 11, 28, 22, 37, tzinfo=UTC)
+        before = datetime(2025, 11, 29, 4, 59, tzinfo=UTC)
+        midnight = datetime(2025, 11, 29, 5, tzinfo=UTC)
+        for status, observed, attempt_status in (
+            ("PARTIAL_COVERAGE", midnight, "SKIPPED_SCHEDULE_EXPIRED"),
+            ("YAHOO_TARGET_COVERAGE_BELOW_FLOOR", before, "YAHOO_TARGET_COVERAGE_BELOW_FLOOR"),
+        ):
+            with (
+                self.subTest(status=status),
+                patch("us_watchlist.app.iwb_automation.datetime", wraps=datetime) as clock,
+                patch("us_watchlist.app.iwb_automation._prepare_pool"),
+                patch("us_watchlist.app.iwb_automation.observe_iwb", return_value={
+                    "status": status, "observed_at": observed.isoformat(), "yahoo_zip_sha256": "1" * 64,
+                    "holdings_csv_sha256": "a" * 64, "target_bars": 10,
+                }) as observe,
+                patch("us_watchlist.app.iwb_automation.wait_before_recapture",
+                      side_effect=lambda: setattr(clock.now, "return_value", midnight)) as retry,
+            ):
+                clock.now.return_value = before
+                state, outputs = automate_iwb(self.root / status, archive, "a" * 40, scheduled=True)
+                self.assertEqual(state["status"], "SKIPPED_SCHEDULE_EXPIRED")
+                self.assertEqual([record["status"] for record in state["attempts"]], [attempt_status])
+                self.assertEqual(retry.call_count, int(observed == before))
+                observe.assert_called_once()
+                self.assertIn("diagnostic_attempt_1", outputs)
+                self.assertNotIn("report_name", outputs)
 
     def test_successful_evidence_replays_and_published_identity_skips_live_acquisition(self):
         pool = self.root / "pool"
