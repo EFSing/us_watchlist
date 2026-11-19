@@ -14,15 +14,20 @@
 | [#5](https://github.com/EFSing/us_watchlist/pull/5) | `75074995e1f7c6b0424dd2592696a8bd5f1cfbc0` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44472860181) |
 | [#6](https://github.com/EFSing/us_watchlist/pull/6) | `60c04f24986cf90ad65fd7a52322041aa980edc7` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44473004144) |
 
-已获准从 `main` 手动验收一次 hosted runner，目标交易日 2026-11-18，持仓日期留空。
-归档和恢复步骤见 [自动化说明](docs/IWB_AUTOMATION.md)。正式定时和通知关闭，IBKR 执行未接入。
+2026-11-18 的 hosted runner 手动验收已完成，仅从 `main` 派发一次，持仓日期留空。
+覆盖 1,020／1,020，B 31、C 均衡 3、C 保守 0，三个私有产物已下载并校验。
+已具备单独申请每日定时的运行证据，实际启用待授权。正式定时和通知关闭，IBKR 执行未接入。
+详见 [验收与恢复](docs/IWB_AUTOMATION.md#2026-11-18-hosted-runner-验收)和 [Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44476972797)。
+
+当前独立审阅分支为 `codex/iwb-hosted-acceptance-governance`（本次治理及验收证据）和
+`codex/iwb-c-reference-stop-risk`（C 止损距离与研究风险警示）。[C 审阅 PR #7](https://github.com/EFSing/us_watchlist/pull/7)
 
 ## 合并前审阅快照
 
 原审阅从 `codex/us-research-daily-plans` 恢复，当时 `main` 为 `7c7761a`，六项 PR 均为 Draft，
 每项基线为上一项的 HEAD。
 
-| 顺序 | 范围 | 本轮核对的 HEAD 和 CI |
+| 顺序 | 范围 | 当时核对的 HEAD 和 CI |
 | --- | --- | --- |
 | [#1](https://github.com/EFSing/us_watchlist/pull/1) | 工程骨架及依赖约束 | `b5e341b` [push CI](https://github.com/EFSing/us_watchlist/actions/runs/44282595287) |
 | [#2](https://github.com/EFSing/us_watchlist/pull/2) | Candidate、共用行情及 B 形态 | `bbb43e5` [push CI](https://github.com/EFSing/us_watchlist/actions/runs/44301093073) |
@@ -57,3 +62,6 @@ git status --short --branch
 11-18 最终验收版在 `.runtime/data/iwb-validation/2026-11-18-final-review/report.html`。首页显示 B 数值门槛通过 5 只，
 其中 3 只同时处于 2→3 价格结构代理，标为「结构研究重点观察（未验证）」。B 31、C 3／0，2→3 代理共 9 只。
 旧研究版留在 `2026-11-18-research/`。冻结对照与 HTML SHA-256 见 [B+C 参考研究](docs/BC_REFERENCE_RESEARCH.md)。
+
+本轮从私有 Actions 恢复的日报、持仓和运行收据位于
+`.runtime/data/iwb-validation/2026-11-18-hosted-44476972797/`，分别存于 `daily/`、`pool/` 和 `attempt/`。
