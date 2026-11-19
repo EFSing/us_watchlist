@@ -78,6 +78,14 @@ class CandidateResearch:
     volume: PullbackVolume
     trade: PlanObservation
 
+    @property
+    def passed_b_numeric_gate(self) -> bool:
+        return self.trade.qualification == "B_NUMERIC_QUALIFIED"
+
+    @property
+    def in_b_transition_cohort(self) -> bool:
+        return self.passed_b_numeric_gate and self.structure.stage == TRANSITION
+
 
 @dataclass(frozen=True)
 class ReplayResearch:

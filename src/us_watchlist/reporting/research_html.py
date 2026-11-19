@@ -111,8 +111,8 @@ def _judgment(row: CandidateResearch, *, is_b: bool) -> str:
         return "C 结构已由本规则的收盘条件确认。量能用于描述回踩，C 同阶段偏好尚未建立。"
     if row.structure.stage != TRANSITION:
         return "同阶段预期判断适用于符合研究资格的 2→3 切换。本阶段以上述量能事实为准。"
-    if row.trade.qualification != "B_NUMERIC_QUALIFIED":
-        return "属于 2→3 切换代理。完整 B 数值门槛未获确认，同阶段判断暂缺。"
+    if not row.in_b_transition_cohort:
+        return "属于 2→3 切换代理。移植数值门槛未获确认，同阶段判断暂缺。"
     judgments = [item.coordinate.judgment if item.coordinate else None for item in row.volume.measures]
     if any(value is None for value in judgments):
         return "综合判断需三项均可比较，现有样本或字段不足。"
@@ -132,9 +132,9 @@ def _plan(row: CandidateResearch, *, is_b: bool) -> str:
     eligibility = ""
     if is_b:
         label = {
-            "B_NUMERIC_QUALIFIED": "完整 B 数值门槛 · 通过",
-            "B_NUMERIC_REJECTED": "完整 B 数值门槛 · 未通过",
-            "B_NUMERIC_UNAVAILABLE": "完整 B 数值门槛 · 资料不足",
+            "B_NUMERIC_QUALIFIED": "B 移植数值门槛 · 通过",
+            "B_NUMERIC_REJECTED": "B 移植数值门槛 · 未通过",
+            "B_NUMERIC_UNAVAILABLE": "B 移植数值门槛 · 资料不足",
         }[trade.qualification]
         reason = (_REASONS[trade.qualification_reason]
                   if trade.qualification_reason and trade.qualification_reason != trade.missing_reason else "")
@@ -179,20 +179,37 @@ def candidate_research(row: CandidateResearch, *, is_b: bool) -> str:
 </div></div>"""
 
 
+def _tickers(rows: tuple[CandidateResearch, ...], empty: str) -> str:
+    return "".join(
+        f'<a href="#{escape(row.strategy_version)}-{escape(row.symbol)}">{escape(row.symbol)}</a>'
+        for row in rows
+    ) or f'<span class="note">{empty}</span>'
+
+
 def research_summary(research: ReplayResearch, b_version: str) -> str:
     b = tuple(row for row in research.candidates if row.strategy_version == b_version)
     c = tuple(row for row in research.candidates if row.strategy_version != b_version)
     counts = Counter(row.trade.qualification for row in b)
-    transition = tuple(row for row in b if row.structure.stage == TRANSITION)
-    comparable = sum(all(item.coordinate and item.coordinate.judgment is not None for item in row.volume.measures)
-                     for row in transition)
-    return f"""<div class="callout"><strong>参考计划与资格核对</strong>
-<p>B 完整数值门槛通过 {counts["B_NUMERIC_QUALIFIED"]:,}／{len(b):,} 只，
-未通过 {counts["B_NUMERIC_REJECTED"]:,} 只，资料不足 {counts["B_NUMERIC_UNAVAILABLE"]:,} 只。
-正式资格待独立审查。</p>
-<p>可显示参考计划 · B {sum(row.trade.plan is not None for row in b):,}／{len(b):,} 只，
+    qualified = tuple(row for row in sorted(b, key=lambda row: row.symbol) if row.passed_b_numeric_gate)
+    cohort = tuple(row for row in qualified if row.in_b_transition_cohort)
+    transition_count = sum(row.structure.stage == TRANSITION for row in b)
+    return f"""<div class="research-overview">
+<div class="research-lists">
+<section id="b-numeric-pass" class="research-list">
+<h3>B 数值门槛通过 <span>{len(qualified):,}／{len(b):,} 只</span></h3>
+<p class="note">在 B 形态匹配中核对移植数值门槛。未通过 {counts["B_NUMERIC_REJECTED"]:,} 只，资料不足 {counts["B_NUMERIC_UNAVAILABLE"]:,} 只。</p>
+<div class="ticker-list">{_tickers(qualified, "本轮无通过记录")}</div>
+</section>
+<section id="b-structure-focus" class="research-list">
+<h3>结构研究重点观察（未验证） <span>{len(cohort):,} 只</span></h3>
+<p class="note">同时通过 B 数值门槛且处于 2→3 价格结构代理。本轮 2→3 代理共 {transition_count:,} 只。</p>
+<div class="ticker-list">{_tickers(cohort, "本轮无交集记录")}</div>
+</section>
+</div>
+<p class="note"><strong>美股正式 B 策略资格尚未建立。</strong> 两组按股票代码排列。</p>
+<p class="note">可显示参考计划 · B {sum(row.trade.plan is not None for row in b):,}／{len(b):,} 只，
 C {sum(row.trade.plan is not None for row in c):,}／{len(c):,} 条规则匹配。</p>
-<p>B 价格结构代理 · 2→3 切换 {len(transition):,} 只，其中三项均可作同阶段比较 {comparable:,} 只。</p></div>"""
+</div>"""
 
 
 def research_definitions(row: CandidateResearch, *, is_b: bool) -> str:

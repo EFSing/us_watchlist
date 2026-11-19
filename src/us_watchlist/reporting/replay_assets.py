@@ -139,6 +139,13 @@ code { font-family: inherit; }
 """
 
 RESEARCH_STYLE = """
+.research-overview { margin-bottom: 14px; }
+.research-lists { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; margin-bottom: 8px; }
+.research-list { padding: 10px 12px; background: #eef5f9; border: 1px solid var(--border); border-top: 3px solid var(--accent); }
+.research-list h3 span { display: inline-block; margin-left: 4px; color: var(--accent); }
+.research-list .ticker-list { margin-top: 6px; }
+.research-list .ticker-list a { padding: 4px 9px; background: var(--surface); }
+.research-list .ticker-list a:hover { background: #eef5f9; }
 .research-stage {
   display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px;
   margin-bottom: 8px; padding: 7px 9px; background: #eef5f9; color: var(--accent);
@@ -166,7 +173,7 @@ RESEARCH_STYLE = """
   .plan-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
-  .watch-research-grid { grid-template-columns: minmax(0, 1fr); }
+  .research-lists, .watch-research-grid { grid-template-columns: minmax(0, 1fr); }
 }
 @media (max-width: 480px) {
   .research-metric { grid-template-columns: minmax(0, 1fr) auto;

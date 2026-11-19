@@ -143,16 +143,16 @@ def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, res
             note = f"历史不足 {rule.reasons['INCOMPLETE_HISTORY']:,} 只"
         cards.append(f'<a href="#{rule.version}"><span>{rule.label}</span>'
                      f'<strong>{count}</strong><small>{rule.match_label} · {note}</small></a>')
-    study = "\n" + research_summary(research, _B) if research is not None else ""
+    study = research_summary(research, _B) + "\n" if research is not None else ""
     return f"""<section id="overview" class="panel">
 <div class="section-head"><h2>今日总览</h2>{_pill(f"数据状态 · {status}", warning=status != "完成")}</div>
-<div class="overview-grid">
+{study}<div class="overview-grid">
   <div class="overview-lead"><p class="section-kicker">股票池与行情</p><strong>{lead}</strong>
   <p class="note">持仓日期 {evidence.seed_date} · 使用美股常规交易时段日线</p></div>
   <dl class="overview-facts">{facts}</dl>
 </div>
 <div class="decision-grid" style="--rule-count:{len(rules)}">{"".join(cards)}</div>
-<div class="callout warning"><strong>研究效果未验证</strong><p>{risk}</p></div>{study}
+<div class="callout warning"><strong>研究效果未验证</strong><p>{risk}</p></div>
 </section>"""
 
 
@@ -168,7 +168,7 @@ def _risk(evidence: ReplayEvidence) -> tuple[str, str]:
     return "本页使用合成样本检验流程。", "股票池与行情均为合成输入。"
 
 
-def _candidates(rules: tuple[_Rule, ...], c_rules: tuple[_Rule, ...]) -> str:
+def _candidates(rules: tuple[_Rule, ...], c_rules: tuple[_Rule, ...], *, has_research: bool) -> str:
     groups = []
     for rule in rules:
         symbols = "".join(
@@ -183,11 +183,11 @@ def _candidates(rules: tuple[_Rule, ...], c_rules: tuple[_Rule, ...]) -> str:
             c_note = f" C 两套规则合计 {len(unique):,} 只（按代码去重）。"
         else:
             c_note = " C 暂无可用的规则结果。"
+    focus_note = "" if has_research else '\n<p class="callout"><strong>重点观察</strong> · 暂无经过审查的优选规则。</p>'
     return f"""<section id="candidates" class="panel">
 <div class="section-head"><div><h2>今日候选</h2>
 <p class="section-note">按规则列出全部匹配，点击代码查看个股。{c_note}</p></div></div>
-{"".join(groups)}
-<p class="callout"><strong>重点观察</strong> · 暂无经过审查的优选规则。</p>
+{"".join(groups)}{focus_note}
 </section>"""
 
 
@@ -371,7 +371,7 @@ def render_replay(
 </header>
 <nav class="section-nav" aria-label="日报章节导航">{nav}</nav>
 {_overview(evidence, rules, risk, research)}
-{_candidates(rules, c_rules)}
+{_candidates(rules, c_rules, has_research=research is not None)}
 {summary}
 {sections}
 {_audit(evidence, rules, audit_risk, research)}

@@ -207,6 +207,42 @@ class ResearchReportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "completed screening session and cutoff"):
             observe_joint(self.evidence, self.inputs, replace(self.b, evaluations=rows), self.c)
 
+    def test_homepage_projects_b_gate_and_transition_intersection_without_ranking(self):
+        research = observe_joint(self.evidence, self.inputs, self.b, self.c)
+        matched = next(row for row in self.b.evaluations if row.signal is not None)
+        template = next(row for row in research.candidates if row.strategy_version == self.b.strategy.version)
+        cases = (
+            ("ZZZ", TRANSITION, "B_NUMERIC_QUALIFIED"),
+            ("CCC", TRANSITION, "B_NUMERIC_UNAVAILABLE"),
+            ("BBB", "EARLY_PULLBACK", "B_NUMERIC_QUALIFIED"),
+            ("AAA", TRANSITION, "B_NUMERIC_QUALIFIED"),
+        )
+        b = replace(self.b, evaluations=tuple(
+            replace(matched, symbol=symbol, signal=replace(matched.signal, symbol=symbol)) for symbol, _, _ in cases
+        ))
+        study = replace(research, candidates=tuple(
+            replace(template, symbol=symbol, structure=replace(template.structure, stage=stage),
+                    trade=replace(template.trade, qualification=qualification))
+            for symbol, stage, qualification in cases
+        ) + tuple(row for row in research.candidates if row.strategy_version != b.strategy.version))
+        html = render_joint_replay(self.evidence, b, self.c, research=study)
+
+        def section(section_id):
+            return re.search(fr'<section id="{section_id}".*?</section>', html, re.DOTALL)[0]
+
+        def b_tickers(markup):
+            return re.findall(fr'href="#{b.strategy.version}-([^"]+)"', markup)
+
+        self.assertEqual(b_tickers(section("b-numeric-pass")), ["AAA", "BBB", "ZZZ"])
+        focus = section("b-structure-focus")
+        self.assertIn("结构研究重点观察（未验证）", focus)
+        self.assertIn("2→3 代理共 3 只", focus)
+        self.assertEqual(b_tickers(focus), ["AAA", "ZZZ"])
+        self.assertIn("美股正式 B 策略资格尚未建立", html)
+        self.assertEqual(b_tickers(section("candidates")), [symbol for symbol, _, _ in cases])
+        for symbol, _, _ in cases:
+            self.assertIn(f'id="{b.strategy.version}-{symbol}"', html)
+
     def test_new_records_are_separate_and_core_cards_are_outside_folds(self):
         research = observe_joint(self.evidence, self.inputs, self.b, self.c)
         legacy = render_joint_replay(self.evidence, self.b, self.c)

@@ -68,15 +68,11 @@ def pullback_volume(bars: tuple[SessionBar, ...], dates: tuple[date, ...], i: in
     return PullbackVolume(dates[i], dates[i + 1], dates[-2], days, len(up), len(down), days - len(up) - len(down), measures)
 
 
-def _in_cohort(row: CandidateResearch) -> bool:
-    return row.structure.stage == TRANSITION and row.trade.qualification == "B_NUMERIC_QUALIFIED"
-
-
 def _coordinate(row: CandidateResearch, value: Decimal | None, sample: list[Decimal], preference: str) -> VolumeCoordinate:
     size = len(sample)
     if row.structure.stage != TRANSITION:
         return VolumeCoordinate("NOT_PRIMARY_COHORT", size)
-    if not _in_cohort(row):
+    if not row.in_b_transition_cohort:
         return VolumeCoordinate("B_NUMERIC_QUALIFICATION_NOT_MET", size)
     if value is None:
         return VolumeCoordinate("FEATURE_UNAVAILABLE", size)
@@ -90,7 +86,7 @@ def _coordinate(row: CandidateResearch, value: Decimal | None, sample: list[Deci
 
 
 def compare_b_volume(rows: tuple[CandidateResearch, ...]) -> tuple[CandidateResearch, ...]:
-    eligible = tuple(row for row in rows if _in_cohort(row))
+    eligible = tuple(row for row in rows if row.in_b_transition_cohort)
     samples = [
         [measure.value for row in eligible if (measure := row.volume.measures[i]).value is not None]
         for i in range(len(VOLUME_FIELDS))
