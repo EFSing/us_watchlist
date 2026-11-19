@@ -51,7 +51,8 @@ def _section(result: ScreeningResult, evidence: ReplayEvidence, *, anchored: boo
         coverage = " · ".join(f"{escape(reason)} {count}" for reason, count in sorted(counts.items()))
         body = f"<p>Matches: {len(matches)} · Incomplete history: {missing}</p>{_table(matches)}"
         if others:
-            body += f"<details><summary>Other results · {len(others)}</summary><p>{coverage}</p>{_table(others)}</details>"
+            body += (f"<details><summary>Other results · {len(others)}</summary><p>{coverage}</p>"
+                     f"{_table(others)}</details>")
     record = json.dumps({
         "schema": "us_offline_screening_v1", "strategy": result.strategy.name,
         "version": result.strategy.version, "trade_date": evidence.trade_date.isoformat(),
@@ -78,7 +79,7 @@ def render_replay(
 ) -> str:
     title = escape(title)
     observed = escape(evidence.mode)
-    if evidence.mode == "yahoo_observation":
+    if evidence.mode in {"yahoo_observation", "iwb_yahoo_observation"}:
         timing = (
             "Historical point-in-time status: UNVERIFIED. Yahoo serves revised history at capture time. "
             "Bars through the last observed split are withheld for each affected symbol. "
@@ -92,6 +93,36 @@ def render_replay(
         evidence.adjustments_known_at.isoformat() if evidence.adjustments_known_at else "Unverified at target close"
     )
     sections = "\n".join(_section(result, evidence, anchored=bool(summary)) for result in results)
+    headline = f"Candidate universe: {evidence.candidate_size}"
+    date_label = "Candidate report date and status"
+    source_label = "Candidate archive"
+    mobility = ""
+    run_summary = ""
+    if evidence.iwb is not None:
+        iwb = evidence.iwb
+        age = (evidence.trade_date - evidence.seed_date).days
+        excluded = " · ".join(f"{escape(symbol)} {escape(reason)}" for symbol, reason in iwb.inactive)
+        inactive = f"<p>Equities without an eligible listing · {excluded}</p>" if excluded else ""
+        headline = (
+            f"IWB base equities: {evidence.seed_size} · Listed equities: {evidence.active_size} · "
+            f"Target-session OHLCV: {iwb.target_bars}/{evidence.active_size}"
+        )
+        run_summary = (
+            f"<p>Run status: {escape(iwb.status)} · Holdings age: {age} days (limit {iwb.max_age_days}) · "
+            f"Fund non-equity rows outside the base: {iwb.non_equity_rows}</p>{inactive}"
+            "<p>Research effectiveness / 研究效果: 未验证</p>\n"
+        )
+        date_label = "IWB version date and status"
+        source_label = "IWB official holdings CSV"
+        mobility = """
+@media (max-width: 680px) {
+  main, section { padding: .75rem; }
+  nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+  .scroll th, .scroll td { padding: .4rem; min-width: 6rem; }
+  .scroll th:first-child { position: sticky; left: 0; background: #eef4f9; }
+  .scroll td { overflow-wrap: anywhere; }
+}
+"""
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -111,22 +142,22 @@ dd {{ margin: 0 0 .65rem; overflow-wrap: anywhere; }}
 .scroll {{ overflow-x: auto; }}
 table {{ width: 100%; border-collapse: collapse; margin: .75rem 0; }}
 th, td {{ text-align: left; vertical-align: top; padding: .5rem; border-bottom: 1px solid #dce4ed; }}
-thead {{ background: #eaf1f7; }}
+thead {{ background: #eaf1f7; }}{mobility}
 </style>
 </head>
 <body><main>
 <h1>{title} · {evidence.trade_date}</h1>
-<p>Regular session · {observed} · Candidate universe: {evidence.candidate_size}</p>
-<p>{timing}</p>
+<p>Regular session · {observed} · {headline}</p>
+{run_summary}<p>{timing}</p>
 {summary}<details class="evidence"><summary>Input evidence</summary>
 <dl>
 <dt>Decision / observation cutoff (UTC)</dt><dd>{evidence.cutoff.isoformat()}</dd>
-<dt>Candidate report date and status</dt><dd>{evidence.candidate_date} · {escape(evidence.candidate_status)}</dd>
+<dt>{date_label}</dt><dd>{evidence.candidate_date} · {escape(evidence.candidate_status)}</dd>
 <dt>IWB holdings date</dt><dd>{evidence.seed_date}</dd>
 <dt>IWB equity rows and active rows</dt><dd>{evidence.seed_size} · {evidence.active_size}</dd>
-<dt>Candidate artifact available (UTC)</dt><dd>{evidence.seed.available_at.isoformat()}</dd>
-<dt>Candidate archive</dt><dd>{escape(evidence.seed.source)}</dd>
-<dt>Candidate archive SHA-256</dt><dd>{escape(evidence.seed.snapshot_id)}</dd>
+<dt>{'IWB version' if evidence.iwb else 'Candidate artifact'} available (UTC)</dt><dd>{evidence.seed.available_at.isoformat()}</dd>
+<dt>{source_label}</dt><dd>{escape(evidence.seed.source)}</dd>
+<dt>{source_label} SHA-256</dt><dd>{escape(evidence.seed.snapshot_id)}</dd>
 <dt>Calendar and OHLCV range</dt><dd>{escape(evidence.calendar_source)} ·
 {evidence.first_session} through {evidence.trade_date} · {evidence.expected_sessions} sessions</dd>
 <dt>OHLCV source and availability (UTC)</dt><dd>{escape(evidence.history.source)} ·
@@ -160,4 +191,5 @@ def render_joint_replay(
         f"<p>{c_summary}</p>"
         f'<nav aria-label="Strategy results">{links}</nav>\n'
     )
-    return render_replay(evidence, results, title="US B+C offline daily report", summary=summary)
+    title = "US IWB B+C daily report" if evidence.iwb else "US B+C offline daily report"
+    return render_replay(evidence, results, title=title, summary=summary)

@@ -2,28 +2,19 @@
 
 import json
 import re
-from dataclasses import dataclass
 from datetime import date, datetime
 from hashlib import sha256
 from io import BytesIO
 from zipfile import BadZipFile, ZipFile
 
 from us_watchlist.domain.models import MARKET, Provenance, UniverseMember, UniverseSnapshot
+from us_watchlist.domain.screening import ScreeningUniverse
 
 IWB_SOURCE = "iShares_IWB_OFFICIAL_HOLDINGS"
 ARTIFACT = re.compile(
     r"https://github\.com/EFSing/stock-data-pipeline/actions/runs/[0-9]+/artifacts/[0-9]+"
 )
 LIFECYCLE_STATES = {"ACTIVE", "UNLISTED_OR_NO_MARKET", "WHEN_ISSUED"}
-
-
-@dataclass(frozen=True)
-class PipelineCandidates:
-    snapshot: UniverseSnapshot
-    holdings_date: date
-    seed_count: int
-    active_count: int
-    status: str
 
 
 def read_pipeline_candidates(
@@ -33,7 +24,7 @@ def read_pipeline_candidates(
     artifact_sha256: str,
     uploaded_at: datetime,
     synthetic: bool,
-) -> PipelineCandidates:
+) -> ScreeningUniverse:
     digest = sha256(payload).hexdigest()
     if digest != artifact_sha256:
         raise ValueError("IWB artifact SHA-256 does not match the recorded checksum")
@@ -100,7 +91,7 @@ def read_pipeline_candidates(
         or bool(selected) != (outcome == "CANDIDATES_INCLUDED")
     ):
         raise ValueError("Published Candidate count, symbol list and audit flags disagree")
-    return PipelineCandidates(
+    return ScreeningUniverse(
         UniverseSnapshot(report_date, provenance, tuple(members[symbol] for symbol in sorted(selected))),
         seed_date, count, sum(member.active for member in members.values()), candidate["candidate_status"],
     )

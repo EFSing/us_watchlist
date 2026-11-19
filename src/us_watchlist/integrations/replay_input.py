@@ -12,7 +12,8 @@ from pathlib import Path
 from us_watchlist.domain.models import (
     MARKET, MarketSnapshot, PriceBasis, Provenance, SessionBar, SessionKind, SessionWindow,
 )
-from us_watchlist.integrations.pipeline_iwb import PipelineCandidates, read_pipeline_candidates
+from us_watchlist.domain.screening import ScreeningUniverse
+from us_watchlist.integrations.pipeline_iwb import read_pipeline_candidates
 from us_watchlist.integrations.yahoo_chart import read_yahoo
 
 
@@ -21,7 +22,7 @@ class ReplayInput:
     mode: str
     target_date: date
     cutoff: datetime
-    candidates: PipelineCandidates
+    candidates: ScreeningUniverse
     history: tuple[MarketSnapshot, ...]
     adjustments_known_at: datetime | None
     input_sha256: str
@@ -39,7 +40,7 @@ def _rows(payload: bytes, columns: tuple[str, ...]):
         yield row
 
 
-def _manifest(path: Path) -> tuple[dict, str, PipelineCandidates]:
+def _manifest(path: Path) -> tuple[dict, str, ScreeningUniverse]:
     payload = path.read_bytes()
     config = tomllib.loads(payload.decode("utf-8"))
     mode = config["mode"]
@@ -74,7 +75,7 @@ def yahoo_capture_request(path: Path) -> tuple[Path, date, tuple[str, ...], Prov
 
 
 def _capture_request(
-    path: Path, config: dict, candidates: PipelineCandidates,
+    path: Path, config: dict, candidates: ScreeningUniverse,
 ) -> tuple[Path, date, tuple[str, ...], Provenance]:
     if config["mode"] != "yahoo_observation" or "cutoff" in config:
         raise ValueError("Yahoo observation requires capture time as the cutoff")
