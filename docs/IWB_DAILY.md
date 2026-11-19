@@ -33,3 +33,16 @@ us-watchlist iwb-report --trade-date 2026-11-18 --output .runtime/data/iwb-daily
 | 实际渲染代码 | `b12201b6970ab239c539ea0790eaf21ea6b376c9` |
 
 实际证据在本机 `.runtime/data/iwb-validation/2026-11-18/`，报告从同一冻结输入重跑两次得到相同身份及 SHA。
+
+## 中文日报复渲染
+
+从 11-18 的冻结 `holdings.zip`、`yahoo.zip`、`plan.json` 和 `inputs.json` 在独立目录离线复渲染。
+保留清单中的原代码标识以便逐字节核对输入，中文渲染代码见 [#4](https://github.com/EFSing/us_watchlist/pull/4)。
+基线重跑复现上表旧 HTML SHA。新版重复渲染字节一致，SHA-256 为
+`cc8d1b5dd108a21398b3daef405433fefb6e7edf3ec474ee46202dba12fc83d0`。
+两版逐字段核对了 3,060 条机器记录及输入清单。B 匹配 31 只，C 均衡规则匹配 CHH、GME、H，
+C 保守规则为零。运行收据的基池、覆盖、逐股数据诊断及策略统计一致。
+
+中文版本位于本机 `.runtime/data/iwb-validation/2026-11-18-zh/report.html`。Chrome 离线验证了
+1440 × 1000 桌面与 390 × 844 手机视口的导航、未匹配搜索、默认折叠和原始 JSON 下载。
+截图位于 `.runtime/artifacts/bc-offline/iwb-review-2026-11-18/`。

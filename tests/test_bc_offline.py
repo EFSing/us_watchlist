@@ -48,7 +48,7 @@ class JointOfflineTests(unittest.TestCase):
                     self.assertEqual([row["symbol"] for row in rows], ["DEMOA", "DEMOB", "DEMOC", "DEMOD"])
                     self.assertEqual([row["symbol"] for row in rows if row["matched"]], [expected_signal])
                     self.assertIn("missing session", rows[2]["data_gap"])
-            self.assertIn("C matches from available rule results: 1 unique symbol", html)
+            self.assertIn("C 两套规则合计 1 只（按代码去重）", html)
 
     def test_failed_strategy_remains_visible_and_other_strategy_still_reports_matches(self):
         for failing, valid in ((BreakoutRetestShape, TrendPullback(BALANCED_A)),
@@ -61,7 +61,10 @@ class JointOfflineTests(unittest.TestCase):
                 errors = [item for item in results.values() if item["status"] == "FAILED"]
                 self.assertTrue(errors)
                 self.assertEqual(errors[0]["error"], "RuntimeError: injected </script> fault")
-                self.assertIn("injected &lt;/script&gt; fault", html)
+                main, audit = html.split('<details id="audit"', 1)
+                self.assertIn("该规则执行失败", main)
+                self.assertNotIn("injected", main)
+                self.assertIn("injected &lt;/script&gt; fault", audit)
                 self.assertTrue(any(row["matched"] for row in results[valid.version.version]["evaluations"]))
 
     def test_c_support_uses_pret_pivots_and_volume_never_gates_structure(self):

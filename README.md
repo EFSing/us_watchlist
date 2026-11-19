@@ -42,6 +42,8 @@ HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用
 可选 `capture-yahoo` 冻结 Yahoo Chart 常规时段数据。归档契约、采集和历史时点标识见
 [B 离线验证](docs/B_OFFLINE.md)。
 
+同一输入已有旧版 B HTML 时，先将该 HTML 移到归档目录，再执行新版渲染。发布器会保留已有文件及其内容身份。
+
 ## B+C 联合日报
 
 运行 `us-watchlist bc-offline` 生成合成单文件日报。B 与两套 C 规则分别验证
