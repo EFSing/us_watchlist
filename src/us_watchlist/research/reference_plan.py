@@ -10,6 +10,7 @@ _CENT = Decimal("0.01")
 _BUFFER = Decimal("0.98")
 _PRESSURE_FLOOR = Decimal("1.03")
 _TREND_R = Decimal("2.5")
+_C_STOP_RISK_WARNING = Decimal("0.09")
 B_REQUIRED_SESSIONS = 120
 
 
@@ -132,6 +133,14 @@ def c_reference_plan(
         ("target_before_rounding", target), ("target_rule", target_rule),
     )
     plan = _display_plan(trigger, stop, target, trigger, target_rule)
+    if plan is not None:
+        risk_to_entry = (plan.entry - plan.stop) / plan.entry
+        risk_to_close = (close - plan.stop) / close
+        inputs += (
+            ("risk_to_entry", risk_to_entry), ("risk_to_close", risk_to_close),
+            ("stop_risk_warning_threshold", _C_STOP_RISK_WARNING),
+            ("stop_risk_warning", max(risk_to_entry, risk_to_close) > _C_STOP_RISK_WARNING),
+        )
     return PlanObservation(
         "C_PRICE_RESEARCH", plan=plan, missing_reason=None if plan else "REFERENCE_LEVEL_ORDER_INVALID", inputs=inputs,
     )

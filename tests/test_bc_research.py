@@ -9,8 +9,11 @@ from pathlib import Path
 from us_watchlist.app.bc_offline import evaluate_joint, observe_joint
 from us_watchlist.app.replay import prepare_replay
 from us_watchlist.domain.models import SessionBar
-from us_watchlist.domain.replay_research import TRANSITION, UNCONFIRMED, CandidateResearch, PlanObservation
+from us_watchlist.domain.replay_research import (
+    TRANSITION, UNCONFIRMED, CandidateResearch, PlanObservation, StructureObservation,
+)
 from us_watchlist.reporting.replay_html import render_joint_replay
+from us_watchlist.reporting.research_html import candidate_research
 from us_watchlist.research.pullback import b_structure, compare_b_volume, pullback_volume
 from us_watchlist.research.reference_plan import b_reference_plan, c_reference_plan
 from us_watchlist.research.replay_observations import observe_candidate
@@ -154,18 +157,49 @@ class ReferencePlanTests(unittest.TestCase):
 
     def test_c_uses_native_rebound_support_and_target_threshold(self):
         bars = (bar(106),) * 4 + (bar(111),)
-        pressure = c_reference_plan(bars, Decimal(120), Decimal(100), Decimal(108)).plan
+        observation = c_reference_plan(bars, Decimal(120), Decimal(100), Decimal(108))
+        pressure = observation.plan
         trend = c_reference_plan(bars, Decimal("114.33"), Decimal(100), Decimal(108)).plan
         self.assertEqual(pressure.trigger, Decimal(108))
         self.assertEqual(pressure.stop, Decimal(98))
         self.assertEqual(pressure.target, Decimal(120))
         self.assertEqual(trend.target, Decimal("143.50"))
         self.assertEqual(pressure.entry, pressure.trigger)
+        risk = dict(observation.inputs)
+        self.assertEqual(risk["risk_to_entry"], Decimal(10) / 108)
+        self.assertEqual(risk["risk_to_close"], Decimal(13) / 111)
+        self.assertTrue(risk["stop_risk_warning"])
         self.assert_valid_rr(pressure)
         self.assert_valid_rr(trend)
         bad = c_reference_plan(bars, Decimal(120), Decimal(110), Decimal(105))
         self.assertIsNone(bad.plan)
         self.assertEqual(bad.missing_reason, "REFERENCE_LEVEL_ORDER_INVALID")
+
+    def test_c_stop_warning_compares_both_bases_and_leaves_valid_plans_visible(self):
+        same_close = (bar(100),) * 5
+        higher_entry = (bar("101.25"),) * 4 + same_close[-1:]
+        higher_close = (bar("99.75"),) * 4 + (bar(101),)
+        boundary, above = Decimal("0.09"), Decimal(10) / 101
+        for bars, entry_risk, close_risk, warns in (
+            (same_close, boundary, boundary, False),
+            (higher_entry, above, boundary, True),
+            (higher_close, boundary, above, True),
+        ):
+            with self.subTest(entry_risk=entry_risk, close_risk=close_risk):
+                trade = c_reference_plan(bars, Decimal(120), Decimal("92.86"), Decimal(100))
+                self.assertEqual(trade.qualification, "C_PRICE_RESEARCH")
+                self.assertEqual(trade.plan.stop, Decimal("91.00"))
+                inputs = dict(trade.inputs)
+                self.assertEqual(inputs["risk_to_entry"], entry_risk)
+                self.assertEqual(inputs["risk_to_close"], close_risk)
+                self.assertIs(inputs["stop_risk_warning"], warns)
+                row = CandidateResearch(
+                    "C", "DEMOA", 5, "", StructureObservation("C_CLOSE_REBOUND_CONFIRMED"),
+                    pullback_volume(bars, dates(5), 0), trade,
+                )
+                html = candidate_research(row, is_b=False)
+                self.assertIn(f"参考入场 {entry_risk:.2%} · 信号日收盘 {close_risk:.2%}", html)
+                self.assertEqual("研究风险警示" in html, warns)
 
 
 class ResearchReportTests(unittest.TestCase):
