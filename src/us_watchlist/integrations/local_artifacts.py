@@ -5,6 +5,10 @@ from pathlib import Path
 from tempfile import NamedTemporaryFile
 
 
+def read_artifact(path: Path) -> bytes:
+    return path.read_bytes()
+
+
 def publish_once(path: Path, body: bytes) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     staging = NamedTemporaryFile(

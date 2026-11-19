@@ -3,14 +3,17 @@
 from pathlib import Path
 
 from us_watchlist.domain.screening import ReplayEvidence, ScreeningResult
-from us_watchlist.integrations.replay_input import read_replay
+from us_watchlist.integrations.replay_input import ReplayInput, read_replay
 from us_watchlist.market_data.quality import regular_history
 from us_watchlist.strategies.contracts import Strategy, StrategyInput
 from us_watchlist.universe.eligibility import eligible_symbols
 
 
 def prepare_replay(config_path: Path) -> tuple[ReplayEvidence, StrategyInput]:
-    data = read_replay(config_path)
+    return prepare_input(read_replay(config_path))
+
+
+def prepare_input(data: ReplayInput) -> tuple[ReplayEvidence, StrategyInput]:
     if not data.history:
         raise ValueError("Expected a regular-session calendar")
     pool = data.candidates

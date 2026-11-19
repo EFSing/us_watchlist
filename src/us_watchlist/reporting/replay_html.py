@@ -1,163 +1,360 @@
-"""Render offline screening and input evidence in a standalone HTML file."""
+"""Project offline screening results and evidence into a standalone Chinese report."""
 
 import json
 from collections import Counter
+from dataclasses import asdict, dataclass
 from html import escape
 
 from us_watchlist.domain.screening import Evaluation, Metrics, ReplayEvidence, ScreeningResult
+from us_watchlist.reporting.replay_assets import SCRIPT, STYLE
+from us_watchlist.reporting.replay_labels import REASON, STATUS, data_gap, metric_cells
 
 
-def _metrics(items: Metrics) -> str:
-    return "<br>".join(
-        f"{escape(label)}: {escape(format(value, '.5g') if isinstance(value, float) else str(value))}"
-        for label, value in items
-    )
+_B = "us_breakout_retest_shape_v1"
+_RULES = {
+    _B: (
+        "B · 76 日突破回踩形态", "形态匹配",
+        "在 76 个交易日的窗口内检查首次合格放量突破，以及其后的回踩位置、缩量和收盘转强。",
+    ),
+    "us_c_trend_pullback_balanced_a_v1": (
+        "C · 均衡规则", "研究规则匹配",
+        "要求至少 60 个连续交易日，检查上涨趋势、回踩、支撑与收盘反弹确认。量能仅供观察。",
+    ),
+    "us_c_trend_pullback_conservative_b_v1": (
+        "C · 保守规则", "研究规则匹配",
+        "要求至少 90 个连续交易日，独立检查上涨趋势、回踩、支撑与收盘反弹确认。量能仅供观察。",
+    ),
+}
+_HIGHLIGHTS = {
+    "B": (
+        ("Breakout date", "Platform", "Close / platform"),
+        ("Breakout volume / prior 20d mean", "Retest mean volume / breakout"),
+    ),
+    "C": (
+        ("Pullback depth", "Support floor", "Support ceiling", "Support status", "Rebound high", "Rebound size"),
+        ("RV_T", "Pullback / baseline median volume", "Pullback volume path", "Robust volume z"),
+    ),
+}
+_MODE = {
+    "iwb_yahoo_observation": "收盘后行情观察",
+    "yahoo_observation": "收盘后行情观察",
+    "offline_replay": "外部声明的点时回放",
+    "synthetic": "合成样本",
+}
+_PRICE = {
+    "raw": "原始行情",
+    "adjusted": "复权行情",
+    "split_adjusted": "拆股调整行情",
+    "yahoo_chart_quote": "Yahoo 报价日线，未使用股息复权收盘价",
+}
 
 
-def _table(rows: tuple[Evaluation, ...]) -> str:
-    if not rows:
-        return ""
-    body = "\n".join(
-        f"<tr><th scope='row'>{escape(row.symbol)}</th><td>{escape(row.reason)}</td>"
-        f"<td>{row.sessions_available}</td><td>{_metrics(row.structure)}</td>"
-        f"<td>{_metrics(row.volume)}</td><td>{escape(row.data_gap)}</td></tr>" for row in rows
-    )
-    return f"""<div class="scroll"><table>
-<thead><tr><th>Symbol</th><th>Result</th><th>Bars in window</th><th>Structure</th>
-<th>Volume</th><th>Data gaps</th></tr></thead>
-<tbody>{body}</tbody></table></div>"""
+@dataclass(frozen=True)
+class _Rule:
+    result: ScreeningResult
+    version: str
+    label: str
+    match_label: str
+    description: str
+    matches: tuple[Evaluation, ...]
+    others: tuple[Evaluation, ...]
+    reasons: Counter[str]
+    status: str
 
-
-def _section(result: ScreeningResult, evidence: ReplayEvidence, *, anchored: bool) -> str:
-    name = escape(result.strategy.name)
-    version = escape(result.strategy.version)
-    matches = tuple(row for row in result.evaluations if row.signal is not None)
-    others = tuple(row for row in result.evaluations if row.signal is None)
-    counts = Counter(row.reason for row in others)
-    missing = counts["INCOMPLETE_HISTORY"]
-    if result.error is not None:
-        status, body = "FAILED", f"<p>{escape(result.error)}</p>"
-    else:
-        if not result.evaluations:
+    @classmethod
+    def from_result(cls, result: ScreeningResult) -> "_Rule":
+        version = result.strategy.version
+        label, match_label, description = _RULES.get(version, ("规则结果", "规则匹配", ""))
+        matches = tuple(row for row in result.evaluations if row.signal is not None)
+        others = tuple(row for row in result.evaluations if row.signal is None)
+        reasons = Counter(row.reason for row in others)
+        if result.error is not None:
+            status = "FAILED"
+        elif not result.evaluations:
             status = "NO_CANDIDATES_IN_UNIVERSE"
-        elif missing == len(result.evaluations):
+        elif reasons["INCOMPLETE_HISTORY"] == len(result.evaluations):
             status = "DATA_UNAVAILABLE"
-        elif missing:
+        elif reasons["INCOMPLETE_HISTORY"]:
             status = "PARTIAL_COVERAGE"
-        elif matches:
-            status = "SUCCESS_WITH_MATCHES"
         else:
-            status = "SUCCESS_NO_MATCH"
-        coverage = " · ".join(f"{escape(reason)} {count}" for reason, count in sorted(counts.items()))
-        body = f"<p>Matches: {len(matches)} · Incomplete history: {missing}</p>{_table(matches)}"
-        if others:
-            body += f"<details><summary>Other results · {len(others)}</summary><p>{coverage}</p>{_table(others)}</details>"
-    record = json.dumps({
+            status = "SUCCESS_WITH_MATCHES" if matches else "SUCCESS_NO_MATCH"
+        return cls(result, escape(version), label, match_label, description, matches, others, reasons, status)
+
+
+def _reason(code: str) -> str:
+    return REASON.get(code, "其他情形（见原始记录）")
+
+
+def _json_record(record: dict, *, strategy: str = "") -> str:
+    payload = json.dumps(record, default=str, ensure_ascii=True, allow_nan=False).replace("<", "\\u003c")
+    attribute = f'data-strategy="{strategy}"' if strategy else 'id="record-input"'
+    return f'<script type="application/json" {attribute}>{payload}</script>'
+
+
+def _strategy_record(rule: _Rule, evidence: ReplayEvidence) -> str:
+    result = rule.result
+    return _json_record({
         "schema": "us_offline_screening_v1", "strategy": result.strategy.name,
         "version": result.strategy.version, "trade_date": evidence.trade_date.isoformat(),
-        "cutoff": evidence.cutoff.isoformat(), "mode": evidence.mode, "status": status,
+        "cutoff": evidence.cutoff.isoformat(), "mode": evidence.mode, "status": rule.status,
         "manifest_sha256": evidence.input_sha256, "error": result.error,
         "evaluations": [{
             "symbol": row.symbol, "reason": row.reason, "matched": row.signal is not None,
             "sessions_available": row.sessions_available, "data_gap": row.data_gap,
             "structure": dict(row.structure), "volume": dict(row.volume),
         } for row in result.evaluations],
-    }, default=str, ensure_ascii=True, allow_nan=False).replace("<", "\\u003c")
-    anchor = f' id="{version}"' if anchored else ""
-    return f"""<section{anchor}>
-<h2>{name} <small>{version}</small></h2>
-<p><strong>{status}</strong></p>
-{body}
-<script type="application/json" data-strategy="{version}">{record}</script>
+    }, strategy=rule.version)
+
+
+def _facts(items: tuple[tuple[str, object], ...]) -> str:
+    return "".join(f"<div><dt>{label}</dt><dd>{escape(str(value))}</dd></div>" for label, value in items)
+
+
+def _pill(label: str, *, warning: bool = False) -> str:
+    tone = " warning" if warning else ""
+    return f'<span class="pill{tone}">{label}</span>'
+
+
+def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> str:
+    if iwb := evidence.iwb:
+        facts = _facts((
+            ("IWB 权益基池", f"{evidence.seed_size:,} 只"),
+            ("有有效上市市场", f"{evidence.active_size:,} 只"),
+            ("当日行情覆盖", f"{iwb.target_bars:,} / {evidence.active_size:,}"),
+        ))
+        lead = "IWB 官方基池覆盖"
+        status = STATUS.get(iwb.status, "见审计记录")
+    else:
+        facts = _facts((
+            ("IWB 权益基池", f"{evidence.seed_size:,} 只"),
+            ("IWB 活跃权益", f"{evidence.active_size:,} 只"),
+            ("本轮候选股票池", f"{evidence.candidate_size:,} 只"),
+        ))
+        lead = "上游候选股票池覆盖"
+        status = STATUS.get(evidence.candidate_status, "见审计记录")
+    cards = []
+    for rule in rules:
+        if rule.status in {"FAILED", "DATA_UNAVAILABLE", "NO_CANDIDATES_IN_UNIVERSE"}:
+            count, note = "—", STATUS[rule.status]
+        else:
+            count = f"{len(rule.matches):,} 只"
+            note = f"历史不足 {rule.reasons['INCOMPLETE_HISTORY']:,} 只"
+        cards.append(f'<a href="#{rule.version}"><span>{rule.label}</span>'
+                     f'<strong>{count}</strong><small>{rule.match_label} · {note}</small></a>')
+    return f"""<section id="overview" class="panel">
+<div class="section-head"><h2>今日总览</h2>{_pill(f"数据状态 · {status}", warning=status != "完成")}</div>
+<div class="overview-grid">
+  <div class="overview-lead"><p class="section-kicker">股票池与行情</p><strong>{lead}</strong>
+  <p class="note">持仓日期 {evidence.seed_date} · 使用美股常规交易时段日线</p></div>
+  <dl class="overview-facts">{facts}</dl>
+</div>
+<div class="decision-grid" style="--rule-count:{len(rules)}">{"".join(cards)}</div>
+<div class="callout warning"><strong>研究效果未验证</strong><p>{risk}</p></div>
 </section>"""
 
 
+def _risk(evidence: ReplayEvidence) -> tuple[str, str]:
+    if evidence.mode in {"yahoo_observation", "iwb_yahoo_observation"}:
+        return (
+            "历史点时与拆股量能未验证。各规则只使用满足其历史要求的行情。",
+            "Yahoo 提供采集时可取得的历史日线，历史修订时间未核实。对有拆股记录的股票，"
+            "剔除末次已知拆股日及以前的行情。拆股后的成交量是否已按一致口径调整仍未验证。",
+        )
+    if evidence.mode == "offline_replay":
+        return "点时可用性由外部来源声明。", "交易日历及拆股调整的外部证据仍需核查。"
+    return "本页使用合成样本检验流程。", "股票池与行情均为合成输入。"
+
+
+def _candidates(rules: tuple[_Rule, ...], c_rules: tuple[_Rule, ...]) -> str:
+    groups = []
+    for rule in rules:
+        symbols = "".join(
+            f'<a href="#{rule.version}-{escape(row.symbol)}">{escape(row.symbol)}</a>'
+            for row in rule.matches
+        ) or f'<span class="muted">{STATUS[rule.status] if rule.status != "PARTIAL_COVERAGE" else "本轮无匹配"}</span>'
+        groups.append(f'<div class="candidate-group"><h3>{rule.label}</h3><div class="ticker-list">{symbols}</div></div>')
+    c_note = ""
+    if c_rules:
+        if any(len(rule.others) != rule.reasons["INCOMPLETE_HISTORY"] or rule.matches for rule in c_rules):
+            unique = {row.symbol for rule in c_rules for row in rule.matches}
+            c_note = f" C 两套规则合计 {len(unique):,} 只（按代码去重）。"
+        else:
+            c_note = " C 暂无可用的规则结果。"
+    return f"""<section id="candidates" class="panel">
+<div class="section-head"><div><h2>今日候选</h2>
+<p class="section-note">按规则列出全部匹配，点击代码查看个股。{c_note}</p></div></div>
+{"".join(groups)}
+<p class="callout"><strong>重点观察</strong> · 暂无经过审查的优选规则。</p>
+</section>"""
+
+
+def _metrics_for(metrics: Metrics, keys: tuple[str, ...]) -> tuple[Metrics, Metrics]:
+    by_name = dict(metrics)
+    return (
+        tuple((key, by_name[key]) for key in keys if key in by_name),
+        tuple((key, value) for key, value in metrics if key not in keys),
+    )
+
+
+def _card(row: Evaluation, rule: _Rule) -> str:
+    is_b = rule.result.strategy.version == _B
+    heading = "h3" if is_b else "h4"
+    structure_keys, volume_keys = _HIGHLIGHTS["B" if is_b else "C"]
+    structure, extra_structure = _metrics_for(row.structure, structure_keys)
+    volume, extra_volume = _metrics_for(row.volume, volume_keys)
+    symbol = escape(row.symbol)
+    volume_note = "检查突破放量和回踩缩量。" if is_b else "量能描述当日与回踩期间的交易活跃度。"
+    more = ""
+    if extra_structure or extra_volume or row.data_gap:
+        gap = f"<p>{escape(data_gap(row.data_gap))}</p>" if row.data_gap else ""
+        more = f"""<details><summary>展开其余结构与量能指标</summary>
+<dl class="metrics">{metric_cells(extra_structure + extra_volume)}</dl>{gap}</details>"""
+    return f"""<article class="watch-card" id="{rule.version}-{symbol}">
+<div class="watch-head"><{heading}>{symbol}</{heading}>{_pill(_reason(row.reason))}</div>
+<div class="watch-columns">
+ <div class="watch-facts"><strong>价格结构</strong><dl class="metrics">{metric_cells(structure)}</dl></div>
+ <div class="volume-card"><strong>量能</strong><p class="note">{volume_note}</p>
+ <dl class="metrics">{metric_cells(volume, bars=True)}</dl></div>
+</div>
+{more}
+</article>"""
+
+
+def _other_results(rule: _Rule) -> str:
+    if not rule.others:
+        return ""
+    counts = "".join(f"<li>{_reason(code)} <strong>{count:,}</strong></li>"
+                     for code, count in sorted(rule.reasons.items(), key=lambda pair: (-pair[1], pair[0])))
+    rows = []
+    for row in rule.others:
+        reason = _reason(row.reason)
+        gap = data_gap(row.data_gap)
+        terms = escape(f"{row.symbol} {reason} {gap}".lower())
+        gap_html = f"<small>{escape(gap)}</small>" if gap else ""
+        rows.append(f'<tr data-search="{terms}"><th scope="row">{escape(row.symbol)}</th>'
+                    f"<td>{reason}{gap_html}</td><td>{row.sessions_available:,}</td></tr>")
+    return f"""<details class="fold other-results">
+<summary>其他未匹配股票 · {len(rule.others):,} 只</summary><div class="fold-content">
+<ul class="reason-list" aria-label="未匹配原因汇总">{counts}</ul>
+<div class="toolbar" hidden>
+<label for="search-{rule.version}">搜索</label>
+<input id="search-{rule.version}" type="search" placeholder="输入股票代码或原因">
+<output for="search-{rule.version}" aria-live="polite"></output>
+</div>
+<table><thead><tr><th scope="col">股票代码</th><th scope="col">未匹配原因</th>
+<th scope="col">可用交易日</th></tr></thead><tbody>{"".join(rows)}</tbody></table>
+</div></details>"""
+
+
+def _rule_section(rule: _Rule, heading: str) -> str:
+    content = "".join(_card(row, rule) for row in rule.matches)
+    if not content:
+        message = {
+            "FAILED": "该规则执行失败。原始异常见审计区。",
+            "DATA_UNAVAILABLE": "该规则所需历史行情不足。",
+            "NO_CANDIDATES_IN_UNIVERSE": "本轮股票池为空。",
+        }.get(rule.status, "本轮没有匹配的股票。")
+        content = f'<p class="empty">{message}</p>'
+    return f"""<div class="rule-group" id="{rule.version}">
+<div class="section-head"><div><{heading}>{rule.label}</{heading}>
+<p class="section-note">{rule.description}</p></div>{_pill(STATUS[rule.status])}</div>
+<div class="watch-list">{content}</div>
+{_other_results(rule)}
+</div>"""
+
+
+def _audit(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> str:
+    seed_label = "IWB 官方持仓" if evidence.iwb else "上游候选归档"
+    history_source = evidence.history.source
+    if history_source.startswith("Yahoo Chart v8"):
+        history_source = "Yahoo Chart v8 日线报价"
+    elif evidence.mode == "synthetic":
+        history_source = "合成日线样本"
+    metadata = (
+        ("数据模式", _MODE[evidence.mode]), ("决策或观察截止（UTC）", evidence.cutoff.isoformat()),
+        (f"{seed_label}版本", f"{evidence.candidate_date} · {STATUS.get(evidence.candidate_status, '见原始记录')}"),
+        ("IWB 持仓日期", evidence.seed_date), (f"{seed_label}取得时间（UTC）", evidence.seed.available_at.isoformat()),
+        (f"{seed_label}来源", evidence.seed.source), (f"{seed_label} SHA-256", evidence.seed.snapshot_id),
+        ("交易日历与日线范围", f"{evidence.calendar_source} · {evidence.first_session} 至 {evidence.trade_date}"
+         f" · {evidence.expected_sessions:,} 个交易日"),
+        ("行情来源与取得时间（UTC）", f"{history_source} · {evidence.history.available_at.isoformat()}"),
+        ("行情输入 SHA-256", evidence.history.snapshot_id.rpartition("/")[0]),
+        ("价格与量能口径", _PRICE.get(evidence.price_basis, "见原始记录")),
+        ("拆股调整可用时间（UTC）", evidence.adjustments_known_at.isoformat()
+         if evidence.adjustments_known_at else "目标收盘时未验证"),
+        ("输入清单 SHA-256", evidence.input_sha256),
+    )
+    if iwb := evidence.iwb:
+        metadata += (
+            ("持仓日期距交易日", f"{(evidence.trade_date - evidence.seed_date).days} 日 · 上限 {iwb.max_age_days} 日"),
+            ("基池外非权益记录", f"{iwb.non_equity_rows:,} 条"),
+            ("上市资格排除", "；".join(f"{symbol}（{_reason(reason)}）" for symbol, reason in iwb.inactive) or "无"),
+        )
+    versions = "".join(f"<li>{rule.label} · <code>{rule.version}</code></li>" for rule in rules)
+    downloads = "".join(f'<button type="button" hidden data-record="{rule.version}">{rule.label}</button>'
+                        for rule in rules)
+    errors = "".join(f'<p class="raw-error">{rule.label} · {escape(rule.result.error)}</p>'
+                     for rule in rules if rule.result.error is not None)
+    return f"""<details id="audit" class="panel fold">
+<summary>数据来源与技术审计</summary>
+<div class="fold-content">
+<p class="callout warning">{risk}</p>
+<dl class="audit-grid">{_facts(metadata)}</dl>
+<h3>策略版本</h3><ul>{versions}</ul>
+{errors}
+<h3>原始机器记录</h3>
+<p class="note">包含输入身份、规则状态，以及逐股原因、历史缺口、结构与量能的原始字段和精度。</p>
+<div class="toolbar"><button type="button" hidden data-record="record-input">输入证据</button>{downloads}</div>
+{_json_record(asdict(evidence))}
+{"".join(_strategy_record(rule, evidence) for rule in rules)}
+</div></details>"""
+
+
 def render_replay(
-    evidence: ReplayEvidence, results: tuple[ScreeningResult, ...], *, title: str = "US B shape diagnostic",
+    evidence: ReplayEvidence, results: tuple[ScreeningResult, ...], *, title: str = "美股 B 形态日报",
     summary: str = "",
 ) -> str:
-    title = escape(title)
-    observed = escape(evidence.mode)
-    if evidence.mode == "yahoo_observation":
-        timing = (
-            "Historical point-in-time status: UNVERIFIED. Yahoo serves revised history at capture time. "
-            "Bars through the last observed split are withheld for each affected symbol. "
-            "Volume adjustment remains unverified."
-        )
-    elif evidence.mode == "offline_replay":
-        timing = "Historical point-in-time status: EXTERNALLY ATTESTED. Calendar and adjustment evidence require source review."
-    else:
-        timing = "Synthetic input."
-    adjustments = (
-        evidence.adjustments_known_at.isoformat() if evidence.adjustments_known_at else "Unverified at target close"
-    )
-    sections = "\n".join(_section(result, evidence, anchored=bool(summary)) for result in results)
+    rules = tuple(_Rule.from_result(result) for result in results)
+    # The joint entry point supplies B first, then each independently evaluated C rule.
+    c_rules = rules[1:]
+    risk, audit_risk = _risk(evidence)
+    links = [("overview", "今日总览"), ("candidates", "今日候选")]
+    sections = ""
+    if rules:
+        links.append((rules[0].version, "B 形态"))
+        sections = f'<section class="panel">{_rule_section(rules[0], "h2")}</section>'
+    if c_rules:
+        links.append(("c-results", "C 研究"))
+        sections += ('<section id="c-results" class="panel"><div class="section-head"><h2>C 研究规则</h2></div>'
+                     + "".join(_rule_section(rule, "h3") for rule in c_rules) + "</section>")
+    links.append(("audit", "数据审计"))
+    nav = "".join(f'<a href="#{anchor}">{label}</a>' for anchor, label in links)
     return f"""<!doctype html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{title} · {evidence.trade_date}</title>
-<style>
-body {{ margin: 0; background: #f3f6fa; color: #172638; font: 15px/1.5 system-ui, sans-serif; }}
-main {{ max-width: 1320px; margin: auto; padding: 1.25rem; }}
-section, details.evidence {{ background: white; border: 1px solid #cfdae5; border-radius: 8px;
-  padding: 1rem; margin: 1rem 0; }}
-h1, h2 {{ margin-top: 0; }}
-h2 small {{ display: inline-block; color: #42566b; font-size: .7em; overflow-wrap: anywhere; }}
-summary {{ cursor: pointer; color: #164d72; }}
-dt {{ font-weight: 650; }}
-dd {{ margin: 0 0 .65rem; overflow-wrap: anywhere; }}
-.scroll {{ overflow-x: auto; }}
-table {{ width: 100%; border-collapse: collapse; margin: .75rem 0; }}
-th, td {{ text-align: left; vertical-align: top; padding: .5rem; border-bottom: 1px solid #dce4ed; }}
-thead {{ background: #eaf1f7; }}
-</style>
+<title>{escape(title)} · {evidence.trade_date}</title>
+<style>{STYLE}</style>
 </head>
 <body><main>
-<h1>{title} · {evidence.trade_date}</h1>
-<p>Regular session · {observed} · Candidate universe: {evidence.candidate_size}</p>
-<p>{timing}</p>
-{summary}<details class="evidence"><summary>Input evidence</summary>
-<dl>
-<dt>Decision / observation cutoff (UTC)</dt><dd>{evidence.cutoff.isoformat()}</dd>
-<dt>Candidate report date and status</dt><dd>{evidence.candidate_date} · {escape(evidence.candidate_status)}</dd>
-<dt>IWB holdings date</dt><dd>{evidence.seed_date}</dd>
-<dt>IWB equity rows and active rows</dt><dd>{evidence.seed_size} · {evidence.active_size}</dd>
-<dt>Candidate artifact available (UTC)</dt><dd>{evidence.seed.available_at.isoformat()}</dd>
-<dt>Candidate archive</dt><dd>{escape(evidence.seed.source)}</dd>
-<dt>Candidate archive SHA-256</dt><dd>{escape(evidence.seed.snapshot_id)}</dd>
-<dt>Calendar and OHLCV range</dt><dd>{escape(evidence.calendar_source)} ·
-{evidence.first_session} through {evidence.trade_date} · {evidence.expected_sessions} sessions</dd>
-<dt>OHLCV source and availability (UTC)</dt><dd>{escape(evidence.history.source)} ·
-{evidence.history.available_at.isoformat()}</dd>
-<dt>OHLCV input SHA-256</dt><dd>{escape(evidence.history.snapshot_id.rpartition('/')[0])}</dd>
-<dt>Price and volume basis</dt><dd>{evidence.price_basis}</dd>
-<dt>Split adjustments known (UTC)</dt><dd>{adjustments}</dd>
-<dt>Run manifest SHA-256</dt><dd>{evidence.input_sha256}</dd>
-</dl></details>
+<header class="site-header">
+ <div><p class="eyebrow">美股策略复盘</p><h1>{escape(title)}</h1>
+ <div class="pills">{_pill("常规交易时段")}{_pill(_MODE[evidence.mode])}</div></div>
+ <p class="date">交易日 <strong>{evidence.trade_date}</strong></p>
+</header>
+<nav class="section-nav" aria-label="日报章节导航">{nav}</nav>
+{_overview(evidence, rules, risk)}
+{_candidates(rules, c_rules)}
+{summary}
 {sections}
-</main></body></html>
+{_audit(evidence, rules, audit_risk)}
+</main><script>{SCRIPT}</script></body></html>
 """
 
 
 def render_joint_replay(
     evidence: ReplayEvidence, b: ScreeningResult, c: tuple[ScreeningResult, ...],
 ) -> str:
-    results = (b, *c)
-    links = " · ".join(
-        f'<a href="#{escape(item.strategy.version)}">{escape(item.strategy.name)}</a>' for item in results
-    )
-    c_rows = tuple(row for item in c for row in item.evaluations)
-    c_matches = {row.symbol for row in c_rows if row.signal is not None}
-    c_summary = (
-        f"C matches from available rule results: {len(c_matches)} unique symbol(s)."
-        if any(row.reason != "INCOMPLETE_HISTORY" for row in c_rows) else "C rule results unavailable."
-    )
-    summary = (
-        "<p>B reports the 76-session breakout/retest shape. "
-        "C reports trend, pullback, support and rebound confirmation with descriptive volume.</p>"
-        f"<p>{c_summary}</p>"
-        f'<nav aria-label="Strategy results">{links}</nav>\n'
-    )
-    return render_replay(evidence, results, title="US B+C offline daily report", summary=summary)
+    title = "美股收盘日报 · IWB" if evidence.iwb else "美股 B+C 离线日报"
+    return render_replay(evidence, (b, *c), title=title)

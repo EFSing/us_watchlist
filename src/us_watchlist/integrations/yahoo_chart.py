@@ -16,10 +16,12 @@ from us_watchlist.domain.models import (
     MarketSnapshot, PriceBasis, Provenance, SessionBar, SessionKind, SessionWindow, require_utc,
 )
 from us_watchlist.integrations.local_artifacts import publish_once
+from us_watchlist.integrations.xnys import calendar_source, regular_windows
 
 HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
 SOURCE = "Yahoo Chart v8 · quote OHLCV (dividend-adjusted close excluded)"
 SCHEMA = "us_yahoo_chart_observation_v1"
+IWB_SCHEMA = "us_yahoo_chart_iwb_observation_v1"
 FIELDS = ("open", "high", "low", "close", "volume")
 
 
@@ -55,30 +57,20 @@ def _fetch(symbol: str, start: date, end: date) -> tuple[dict, bytes | None]:
 
 
 def capture_yahoo(
-    path: Path, target: date, symbols: tuple[str, ...], candidate: Provenance, sessions: int,
+    path: Path, target: date, symbols: tuple[str, ...], universe: Provenance, sessions: int,
+    *, official_iwb: bool = False,
 ) -> tuple[str, int]:
-    # Only acquisition needs the calendar dependency. Replay validates the frozen bundle.
-    from exchange_calendars import __version__, get_calendar
-
     if path.exists():
         raise ValueError(f"Yahoo capture already exists: {path}")
     if not 76 <= sessions <= 252:
         raise ValueError("Yahoo capture requires 76–252 expected regular sessions")
-    calendar = get_calendar("XNYS")
-    if not calendar.is_session(target.isoformat()):
-        raise ValueError("Target must be an XNYS trading session")
-    labels = calendar.sessions_window(target.isoformat(), -sessions)
-    windows = [
-        (label.date().isoformat(), calendar.session_open(label).isoformat(),
-         calendar.session_close(label).isoformat())
-        for label in labels
-    ]
+    windows = regular_windows(target, sessions)
     started = datetime.now(UTC)
-    if candidate.available_at > started:
-        raise ValueError("The Candidate archive is unavailable at capture time")
-    if datetime.fromisoformat(windows[-1][2]) >= started:
+    if universe.available_at > started:
+        raise ValueError("The universe archive is unavailable at capture time")
+    if windows[-1].closes_at >= started:
         raise ValueError("Yahoo capture requires a completed target regular session")
-    first = labels[0].date()
+    first = windows[0].trading_date
     through = started.date()
     records = []
     buffer = BytesIO()
@@ -102,11 +94,14 @@ def capture_yahoo(
         observed = datetime.now(UTC)
         if observed.date() != through:
             raise ValueError("Yahoo capture crossed the UTC date boundary; capture again")
+        identity_key = "holdings_sha256" if official_iwb else "candidate_sha256"
         archive.writestr("manifest.json", json.dumps({
-            "schema": SCHEMA, "market": "US", "calendar": f"XNYS exchange-calendars {__version__}",
-            "candidate_sha256": candidate.snapshot_id, "started_at": started.isoformat(),
+            "schema": IWB_SCHEMA if official_iwb else SCHEMA, "market": "US", "calendar": calendar_source(),
+            identity_key: universe.snapshot_id, "started_at": started.isoformat(),
             "observed_at": observed.isoformat(), "target": target.isoformat(),
-            "requested_sessions": sessions, "windows": windows, "symbols": records,
+            "requested_sessions": sessions, "symbols": records,
+            "windows": [(window.trading_date.isoformat(), window.opens_at.isoformat(), window.closes_at.isoformat())
+                        for window in windows],
         }, sort_keys=True))
     payload = buffer.getvalue()
     publish_once(path, payload)
@@ -167,7 +162,8 @@ def _quote_rows(
 
 
 def read_yahoo(
-    payload: bytes, expected_sha256: str, target: date, symbols: tuple[str, ...], candidate: Provenance,
+    payload: bytes, expected_sha256: str, target: date, symbols: tuple[str, ...], universe: Provenance,
+    *, official_iwb: bool = False,
 ) -> tuple[tuple[MarketSnapshot, ...], datetime, str, tuple[tuple[str, str], ...]]:
     if sha256(payload).hexdigest() != expected_sha256:
         raise ValueError("Yahoo capture SHA-256 does not match the replay manifest")
@@ -177,17 +173,17 @@ def read_yahoo(
         raise ValueError("Expected the original Yahoo capture ZIP") from error
     with archive:
         receipt = json.loads(archive.read("manifest.json"))
-        if (
-            receipt["schema"] != SCHEMA or receipt["market"] != "US"
-            or receipt["target"] != target.isoformat() or receipt["candidate_sha256"] != candidate.snapshot_id
+        schema, key = (IWB_SCHEMA, "holdings_sha256") if official_iwb else (SCHEMA, "candidate_sha256")
+        if (receipt["schema"], receipt["market"], receipt["target"], receipt.get(key)) != (
+            schema, "US", target.isoformat(), universe.snapshot_id,
         ):
-            raise ValueError("Yahoo capture target, market or Candidate archive does not match")
+            raise ValueError("Yahoo capture target, market or universe archive does not match")
         started = datetime.fromisoformat(receipt["started_at"])
         observed = datetime.fromisoformat(receipt["observed_at"])
         require_utc(started)
         require_utc(observed)
-        if not candidate.available_at <= started <= observed <= datetime.now(UTC) or started.date() != observed.date():
-            raise ValueError("Yahoo capture was outside the observable Candidate/time window")
+        if not universe.available_at <= started <= observed <= datetime.now(UTC) or started.date() != observed.date():
+            raise ValueError("Yahoo capture was outside the observable universe/time window")
         windows = {}
         for day, opening, closing in receipt["windows"]:
             day = date.fromisoformat(day)
@@ -200,9 +196,13 @@ def read_yahoo(
             raise ValueError("Yahoo capture regular-session count differs from the request")
         if next(reversed(windows)) != target or windows[target].closes_at >= started:
             raise ValueError("Yahoo capture requires a completed target regular session")
+        if official_iwb and (receipt["calendar"] != calendar_source() or
+                             tuple(windows.values()) != regular_windows(target, len(windows))):
+            raise ValueError("Yahoo capture differs from the XNYS regular calendar")
         records = receipt["symbols"]
         if tuple(record["symbol"] for record in records) != symbols:
-            raise ValueError("Yahoo capture symbol manifest does not match the published Candidate list")
+            scope = "IWB listed equities" if official_iwb else "the published Candidate list"
+            raise ValueError(f"Yahoo capture symbol manifest does not match {scope}")
         expected_names = {"manifest.json"} | {
             f"quotes/{record['symbol']}.json" for record in records if "sha256" in record
         }

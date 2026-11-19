@@ -42,8 +42,14 @@ HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用
 可选 `capture-yahoo` 冻结 Yahoo Chart 常规时段数据。归档契约、采集和历史时点标识见
 [B 离线验证](docs/B_OFFLINE.md)。
 
+同一输入已有旧版 B HTML 时，先将该 HTML 移到归档目录，再执行新版渲染。发布器会保留已有文件及其内容身份。
+
 ## B+C 联合日报
 
 运行 `us-watchlist bc-offline` 生成合成单文件日报。B 与两套 C 规则分别验证
 共同数据中的历史覆盖和结构。打开 `.runtime/artifacts/bc-offline/synthetic/` 下的 HTML
 查看候选与逐股诊断。实际输入、C 规则与观察结果见 [B+C 离线日报](docs/BC_OFFLINE.md)。
+
+## IWB 基础池与 B+C 日报
+
+`us-watchlist iwb-refresh` 下载并冻结官方 IWB 版本。`us-watchlist iwb-report --trade-date YYYY-MM-DD --output <目录>` 从可用本地版本出发，采集 Yahoo 常规会话行情并生成单文件报告。输入格式、数据门槛与真实验证见 [IWB 日报](docs/IWB_DAILY.md)。
