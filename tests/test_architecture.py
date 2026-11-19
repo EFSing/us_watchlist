@@ -16,7 +16,7 @@ LAYERS = {
 }
 PURE_IMPORTS = {
     "__future__", "abc", "collections", "dataclasses", "datetime", "decimal",
-    "enum", "functools", "hashlib", "html", "itertools", "math", "operator",
+    "enum", "functools", "hashlib", "html", "itertools", "json", "math", "operator",
     "re", "statistics", "typing",
 }
 INDIRECT_CALLS = {"__import__", "compile", "eval", "exec"}
