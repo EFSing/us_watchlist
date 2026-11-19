@@ -1,7 +1,7 @@
 """Run one recoverable US daily observation on a fresh Actions runner."""
 
 import re
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from pathlib import Path
 
 from us_watchlist.app.iwb_daily import (
@@ -10,27 +10,42 @@ from us_watchlist.app.iwb_daily import (
 from us_watchlist.integrations.github_artifacts import GitHubArtifacts
 from us_watchlist.integrations.iwb_holdings import MAX_AGE_DAYS, read_holdings
 from us_watchlist.integrations.local_artifacts import publish_once
-from us_watchlist.integrations.xnys import completed_session, is_session, new_york_date, regular_windows
+from us_watchlist.integrations.xnys import (
+    completed_session, is_session, new_york_date, new_york_wall_time, regular_windows,
+)
 from us_watchlist.integrations.yahoo_chart import wait_before_recapture
 
 POOL_PREFIX = "us-iwb-v1-pool-"
 DAILY_PREFIX = "us-iwb-v1-daily-"
 RECHECK_AGE_DAYS = 5
 SCHEDULE_SETTLEMENT_MINUTES = 30
+SCHEDULE_LOCAL_TIME = time(17, 37)
 
 
-def _target(now: datetime, scheduled: bool, requested: date | None) -> tuple[date, str | None]:
-    if scheduled:
-        day = new_york_date(now)
-        if not is_session(day):
-            return day, "SKIPPED_XNYS_CLOSED"
-        if now < regular_windows(day, 1)[0].closes_at + timedelta(minutes=SCHEDULE_SETTLEMENT_MINUTES):
-            return day, "SKIPPED_NOT_READY"
-        return day, None
-    day = requested or completed_session(now)
-    if not is_session(day) or day > completed_session(now):
-        raise ValueError(f"MANUAL_TARGET_REQUIRES_COMPLETED_XNYS_SESSION {day}")
+def _scheduled_target(now: datetime, created: datetime, state: dict) -> tuple[date, str | None]:
+    if created > now:
+        raise ValueError("IWB_SCHEDULE_CREATED_IN_FUTURE")
+    day = new_york_date(created)
+    due = new_york_wall_time(day, SCHEDULE_LOCAL_TIME).astimezone(UTC)
+    state.update({"run_created_at": created.isoformat(), "scheduled_for_utc": due.isoformat()})
+    if not is_session(day):
+        return day, "SKIPPED_XNYS_CLOSED"
+    session, = regular_windows(day, 1)
+    ready = session.closes_at + timedelta(minutes=SCHEDULE_SETTLEMENT_MINUTES)
+    state.update({"session_close_utc": session.closes_at.isoformat(), "settlement_ready_at": ready.isoformat()})
+    if new_york_date(now) != day:
+        return day, "SKIPPED_SCHEDULE_EXPIRED"
+    if created < due or now < ready:
+        return day, "SKIPPED_NOT_READY"
     return day, None
+
+
+def _manual_target(now: datetime, requested: date | None) -> date:
+    latest = completed_session(now)
+    day = requested or latest
+    if not is_session(day) or day > latest:
+        raise ValueError(f"MANUAL_TARGET_REQUIRES_COMPLETED_XNYS_SESSION {day}")
+    return day
 
 
 def _prepare_pool(
@@ -75,7 +90,7 @@ def _prepare_pool(
 
 def _execute(
     archive: GitHubArtifacts, workspace: Path, target: date, holdings_date: date | None,
-    current: bool, code_sha: str, state: dict, outputs: dict[str, str],
+    current: bool, code_sha: str, state: dict, outputs: dict[str, str], *, scheduled: bool,
 ) -> str:
     catalog = archive.catalog()
     name = DAILY_PREFIX + target.isoformat()
@@ -96,7 +111,7 @@ def _execute(
         record = {"attempt": attempt, "started_at": datetime.now(UTC).isoformat()}
         state["attempts"].append(record)
         outputs[f"diagnostic_attempt_{attempt}"] = str(output)
-        run = observe_iwb(target, pool, output, code_sha)
+        run = observe_iwb(target, pool, output, code_sha, require_yahoo_close=scheduled)
         outcome = run["status"]
         record.update({"status": outcome, "yahoo_zip_sha256": run["yahoo_zip_sha256"],
                        "holdings_csv_sha256": run["holdings_csv_sha256"], "target_bars": run["target_bars"]})
@@ -124,11 +139,17 @@ def automate_iwb(
     try:
         if not re.fullmatch(r"[0-9a-f]{40}", code_sha):
             raise ValueError("IWB_INVALID_CODE_SHA")
-        day, skip = _target(now, scheduled, trade_date)
+        if scheduled:
+            if trade_date is not None or holdings_date is not None:
+                raise ValueError("IWB_SCHEDULE_DISALLOWS_MANUAL_DATES")
+            day, skip = _scheduled_target(now, archive.schedule_created_at(code_sha), state)
+        else:
+            day, skip = _manual_target(now, trade_date), None
         state["trade_date"] = day.isoformat()
         outputs["target"] = day.isoformat()
         state["status"] = skip or _execute(
             archive, workspace, day, holdings_date, day == completed_session(now), code_sha, state, outputs,
+            scheduled=scheduled,
         )
     except (OSError, KeyError, TypeError, ValueError, ArithmeticError) as error:
         state["status"] = "FAILED"

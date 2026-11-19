@@ -19,8 +19,17 @@
 已具备单独申请每日定时的运行证据，实际启用待授权。正式定时和通知关闭，IBKR 执行未接入。
 详见 [验收与恢复](docs/IWB_AUTOMATION.md#2026-11-18-hosted-runner-验收)和 [Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44476972797)。
 
-当前独立审阅分支为 `codex/iwb-hosted-acceptance-governance`（本次治理及验收证据）和
-`codex/iwb-c-reference-stop-risk`（C 止损距离与研究风险警示）。[C 审阅 PR #7](https://github.com/EFSing/us_watchlist/pull/7)
+当前审阅顺序建议为 #8 → #7 → 定时 Draft。#8 与 #7 均基于上述 `main`，改动文件互不重叠，
+合并模拟通过。2026-11-19 核对的审阅证据如下，批准后仍须复核当前 HEAD 和合并基线。
+
+| 审阅项 | HEAD | 精确 HEAD 的 PR CI |
+| --- | --- | --- |
+| [#8 治理与手动验收](https://github.com/EFSing/us_watchlist/pull/8) | `ac0b071808d4c85b0432793bf877dc98cab17f1d` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44478000058) |
+| [#7 C 止损距离](https://github.com/EFSing/us_watchlist/pull/7) | `6175df50d5e0ce2e71def1237ead9ef0d446d4d9` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44477617153) |
+
+定时草稿分支 `codex/iwb-daily-schedule` 以 #8 为基线。[定时分支和 CI](https://github.com/EFSing/us_watchlist/commits/codex/iwb-daily-schedule/)
+合并获准后，保留 #8 的 HEAD 于 `main` 的历史中，再将定时 PR 基线改为 `main`，核对独立差异及合并结果 CI。
+`US_IWB_SCHEDULE_ENABLED` 保持关闭，首次真实定时验收和失败补跑见 [运行手册](docs/IWB_AUTOMATION.md#首次定时验收)。
 
 ## 合并前审阅快照
 

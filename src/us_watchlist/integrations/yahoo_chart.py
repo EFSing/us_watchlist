@@ -17,7 +17,7 @@ from us_watchlist.domain.models import (
     MarketSnapshot, PriceBasis, Provenance, SessionBar, SessionKind, SessionWindow, require_utc,
 )
 from us_watchlist.integrations.local_artifacts import publish_once
-from us_watchlist.integrations.xnys import calendar_source, regular_windows
+from us_watchlist.integrations.xnys import calendar_source, new_york_date, regular_windows
 
 HOSTS = ("query1.finance.yahoo.com", "query2.finance.yahoo.com")
 SOURCE = "Yahoo Chart v8 · quote OHLCV (dividend-adjusted close excluded)"
@@ -126,6 +126,7 @@ def _day(timestamp: int) -> date:
 
 def _quote_rows(
     symbol: str, payload: bytes, windows: dict[date, SessionWindow], through: date,
+    *, target_received_at: datetime | None = None,
 ) -> tuple[dict[date, SessionBar], str]:
     chart = json.loads(payload, parse_float=Decimal)["chart"]
     if chart["error"] is not None:
@@ -144,7 +145,7 @@ def _quote_rows(
     )
     if any(day < first or day > through for day in splits):
         raise ValueError("YAHOO_SPLIT_EVENT_OUTSIDE_REQUEST")
-    split_gap = "YAHOO_SPLIT_BASIS_UNVERIFIED " + ", ".join(map(date.isoformat, splits)) if splits else ""
+    diagnostic = "YAHOO_SPLIT_BASIS_UNVERIFIED " + ", ".join(map(date.isoformat, splits)) if splits else ""
     adjustment_boundary = splits[-1] if splits else date.min
 
     quotes, = result["indicators"]["quote"]
@@ -168,12 +169,19 @@ def _quote_rows(
         if None in (opening, high, low, close, volume):
             continue
         rows[day] = SessionBar(symbol, Decimal(opening), Decimal(high), Decimal(low), Decimal(close), volume)
-    return rows, split_gap
+    if target_received_at is not None and target in rows:
+        timestamp = meta.get("regularMarketTime")
+        market_time = datetime.fromtimestamp(timestamp, UTC) if type(timestamp) is int else None
+        if (market_time is None or not windows[target].closes_at <= market_time <= target_received_at
+            or new_york_date(market_time) != target):
+            del rows[target]
+            diagnostic = " · ".join(filter(None, (diagnostic, "YAHOO_TARGET_CLOSE_UNCONFIRMED")))
+    return rows, diagnostic
 
 
 def read_yahoo(
     payload: bytes, expected_sha256: str, target: date, symbols: tuple[str, ...], universe: Provenance,
-    *, official_iwb: bool = False,
+    *, official_iwb: bool = False, require_target_close: bool = False,
 ) -> tuple[tuple[MarketSnapshot, ...], datetime, str, tuple[tuple[str, str], ...]]:
     if sha256(payload).hexdigest() != expected_sha256:
         raise ValueError("Yahoo capture SHA-256 does not match the replay manifest")
@@ -236,12 +244,17 @@ def read_yahoo(
             ):
                 raise ValueError(f"Yahoo quote receipt failed SHA-256, URL or timestamp verification for {symbol}")
             try:
-                rows, split_gap = _quote_rows(symbol, raw, windows, started.date())
+                rows, gap = _quote_rows(
+                    symbol, raw, windows, started.date(), target_received_at=received if require_target_close else None,
+                )
             except (ValueError, TypeError, KeyError, ArithmeticError, AttributeError, OSError) as error:
                 gaps.append((symbol, f"YAHOO_QUOTE_REJECTED {type(error).__name__}: {error}"))
                 continue
-            if split_gap:
-                gaps.append((symbol, split_gap))
+            details = [gap] if gap else []
+            if official_iwb and len(rows) != len(windows):
+                details.append(f"YAHOO_REGULAR_HISTORY_GAP {len(rows)}/{len(windows)}")
+            if details:
+                gaps.append((symbol, " · ".join(details)))
             for day, bar in rows.items():
                 entries[day].append(bar)
         history = tuple(

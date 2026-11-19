@@ -105,6 +105,8 @@ METRIC = {
 
 _DIAGNOSTICS = (
     (r"YAHOO_SPLIT_BASIS_UNVERIFIED (.+)", "拆股调整未验证，已剔除末次拆股日及以前行情。拆股日期 {0}"),
+    (r"YAHOO_TARGET_CLOSE_UNCONFIRMED", "Yahoo 行情时间未能确认当日已收盘，已剔除该日行情"),
+    (r"YAHOO_REGULAR_HISTORY_GAP (\d+)/(\d+)", "采集窗口 {1} 个交易日中有 {0} 根合资格日线"),
     (r"Only (\d+) of (\d+) expected calendar sessions supplied", "所需 {1} 个交易日，仅提供 {0} 个"),
     (r"(\d+) missing session\(s\), latest (.+)", "缺少 {0} 个交易日的行情，最近缺失日期 {1}"),
     (r"YAHOO_FETCH_FAILED(?: .*)?", "行情未能取得"),

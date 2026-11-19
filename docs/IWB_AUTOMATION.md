@@ -1,13 +1,41 @@
 # 独立 IWB 收盘日报审阅运行
 
-[日报工作流](../.github/workflows/iwb-daily.yml) 提供默认分支上的 `workflow_dispatch`。预留的计划为纽约时间交易周工作日 17:37，启用须单独审阅得准并显式开启变量。计划任务按 XNYS 判定节假日和短市，在实际收盘至少 30 分钟后运行。任务串行发布。数据中台 `eded221958d92b581df98af36e50c746c70b8354` 的 US 日报提供调度、串行、有限重试和留痕参考。本项目的输入来自 iShares、Yahoo 和本仓库产物。[数据中台参考工作流](https://github.com/EFSing/stock-data-pipeline/blob/eded221958d92b581df98af36e50c746c70b8354/.github/workflows/us-daily-report.yml)
+[日报工作流](../.github/workflows/iwb-daily.yml) 提供默认分支手动补跑。定时草稿使用 GitHub Actions 原生
+`America/New_York`，周一至周五 17:37 对应夏令时 21:37 UTC、标准时 22:37 UTC。实际执行须经独立批准，
+并把仓库变量 `US_IWB_SCHEDULE_ENABLED` 设为 `true`。变量缺失或为 `false` 时跳过日报作业，手动入口仍可用。
+两种作业共用串行发布组，令牌仅有 `actions: read` 和 `contents: read`，流程只获取输入并发布私有归档。
+[GitHub 调度语法](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
+
+定时事件根据 GitHub API 的原始 `created_at` 锁定纽约目标日，无手动日期参数。XNYS 休市记为
+`SKIPPED_XNYS_CLOSED`，开市日采用该会话的常规收盘时刻，短市同样等待至少 30 分钟。纽约当日晚到的作业可以运行，
+跨过纽约午夜时记录 `SKIPPED_SCHEDULE_EXPIRED` 并以失败结论结束。提前触发或未达收盘等待时间记为
+`SKIPPED_NOT_READY`。GitHub 可能延迟创建或丢弃事件，`created_at` 是原始运行创建时间，验收时与预定时刻分别核对。
+
+新定时采集逐股要求目标日有效 OHLCV、正确的常规会话和已冻结的响应时间。Yahoo `regularMarketTime` 须属于纽约目标日，
+达到 XNYS 当日收盘且早于或等于收到响应的时点。未获确认的目标日线从筛选输入剔除，记入逐股诊断并计入覆盖缺口。
+该字段是 Yahoo 的就绪依据，后续修订及历史点时仍待验证。手动历史补跑继续核对 XNYS、行情时段、可用时间及发布门槛。
+
+## 首次定时验收
+
+1. 合并后在 `main` 核对日报工作流及 CI。若有变量关闭期间的计划事件，核对日报作业为跳过且无产物。
+   获准开启仓库变量后，等待下一个正常 XNYS 会话的 17:37 自然触发，记录工作流 URL、`event=schedule`、HEAD、
+   预定时刻、GitHub 创建时刻、runner 实际开始时刻及纽约目标日。该日保留给计划任务生成首份规范日报。
+2. 从 `workflow.json` 和 `run.json` 核对同日、实际收盘、至少 30 分钟间隔及采集时间。核对 IWB 版本及可用时间、
+   目标日有效 OHLCV 至少 95%、120 日完整历史覆盖、B／C 均衡／C 保守各自的匹配和历史不足、SNDK 及其他逐股缺口。
+   对有重试的运行，核对首次失败输入、下一轮采集时间和最终状态。合成 CI 的验证为工程行为，真实验收需要该日的新采集。
+3. 下载规范日报、诊断收据及本次新发布或引用的成份归档，校验 SHA-256、`iwb-verify`、HTML 审计及报告身份。
+   核对作业步骤仅处理数据、日报与归档。记录未发通知、无 IBKR 调用。命中已有归档的运行可验证恢复，首次前瞻验收仍需下一次新采集。
+
+若没有 `schedule` 运行、作业失败或未发布，先核对变量、工作流版本、队列、XNYS 状态及诊断。记录未完成的定时验收，
+获准后按下节指定该交易日补跑，并保留真实取得时刻。补跑属于事后观察，另选交易日完成自然触发验收。
 
 ## 手动补跑和失败诊断
 
-1. 获准手动运行后，在本项目 **Actions → US IWB B+C Daily → Run workflow** 选择默认分支。空 `trade_date` 使用最近完成的 XNYS 会话，也可指定 `YYYY-MM-DD`。先验证交易日与收盘。
+1. 获准手动运行后，在本项目 **Actions → US IWB B+C Daily → Run workflow** 选择默认分支。空 `trade_date` 使用最近完成的 XNYS 会话。
+   定时失败补跑明确填写原目标 `YYYY-MM-DD`，尤其是跨日后。先验证交易日与收盘。
 2. 当前会话从已归档的本地还原版本出发。缺版本或持仓日期距目标至少五个自然日时查询 iShares 最新持仓。刷新收据记录成份差异和源错误。失败中止本轮并保留既有版本，超过十个自然日的版本不能运行。当历史版本缺失时可手填官方 `holdings_date`，官方回应须与该日期吻合。补跑仍是 Yahoo 和 IWB 的事后观察。
 3. 当 Yahoo 目标 OHLCV 覆盖低于 95%，或任一规则没有证券满足完整历史要求，保留首次证据，75 秒后仅重采一次。逐票请求最多试两个 Yahoo 主机，整批限流短路。每次采集在 10 分钟后停止派发新批次。iShares 和归档目录的临时网络错误最多尝试两次，归档下载最多三次。资格冲突、输入损坏和策略故障直接失败。诊断分别保存缺行情原因、逐轮状态、输入 SHA 和旧版本来源。
-4. 成功及达到目标日覆盖要求的 `PARTIAL_COVERAGE` 使用同一报告身份。已存在规范报告时先恢复并核验文件 SHA，再复用该身份。失败只进入诊断。不同内容与同一已存在版本冲突会显式失败。GitHub 一条并发组可替换等待中的派发，多个手动补跑应逐次提交。
+4. 成功及达到目标日覆盖要求的 `PARTIAL_COVERAGE` 使用同一报告身份。已存在规范报告时先恢复并核验文件 SHA，再复用该身份。失败只进入诊断。不同内容与同一已存在版本冲突会显式失败。GitHub 一条并发组可替换等待中的作业，多个手动补跑应逐次提交。
 
 ## 归档和跨设备恢复
 
@@ -26,7 +54,23 @@ us-watchlist iwb-verify --trade-date 2026-11-18 --directory .runtime/data/iwb-da
 ```
 
 幂等复用与跨设备下载覆盖产物可访问期。过期后可从同一用户保留的副本核验，作长期存储须另行批准。
-正式定时与通知保持关闭。[GitHub 产物保留说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/remove-workflow-artifacts)
+定时执行开关保持关闭。[GitHub 产物保留说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/remove-workflow-artifacts)
+
+## 长期前瞻研究证据
+
+保持 90／30／7 天 Actions 保留期。建议获准后由一名维护者每周在诊断到期前从私有归档导出，每月封存并抽样恢复。
+逐日文件用规范报告身份及输入／报告 SHA-256 去重，同内容复用，异内容报冲突。缺失或失败的交易日单独留收据和失败原因。
+
+- 精简证据为压缩 JSON 和 SHA-256 清单。保留交易日、预定／启动／采集时间、事件类型、运行 URL、代码 SHA、
+  股票池版本及成员符号、输入及报告 SHA、策略版本、逐股资格和缺口、匹配及其研究值。未来收益和执行观察用各自的时间、
+  版本及来源追加记录，引用当日身份和哈希。
+- 完整 Yahoo ZIP、官方持仓原件及 HTML 继续留在短期归档。优先保全首次定时验收、缺口／修订调查及经批准的复盘样本。
+  11-18 hosted 日报的 Yahoo ZIP 约 4 MB，按约 250 个交易日估算每日保存约 1 GB／年，仅包含 Yahoo ZIP。
+  精简记录可追踪当时筛选，完整复算需要保存相同输入原件。
+- 长期位置优先使用现有私有 GitHub 仓库月度 Release 资产，需用户批准研究数据访问范围和发布方式。若现有设置启用了
+  immutable releases，可在发布完该月资产后锁定。如暂未批准或不可用，使用经批准的现有私有备份，由清单和恢复校验验证字节一致性。
+  此 PR 保持 Actions 只读权限，未配置长期写入、付费存储或仓库权限变更。
+  [GitHub Release 资产限制](https://docs.github.com/en/repositories/releasing-projects-on-github/about-releases#storage-and-bandwidth-quotas) · [不可变 Release](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases)
 
 ## 2026-11-18 hosted runner 验收
 
@@ -87,3 +131,6 @@ Yahoo 归档内的逐股原始响应全部通过清单 SHA 验证。HTML 的交�
 - 在 Windows 以 `main` 的代码和已归档云端输入离线重算，输入清单逐字节一致。除 11 项 C 日对数
   斜率的末位浮点差异（最大绝对差约 `1.41e-18`），逐股筛选记录及研究记录一致。斜率尾差可在
   同输入的 Linux 和 Windows 间复现，未改变规则诊断。云端与本地采集均为事后观察。
+- 定时草稿对两份冻结输入应用新的目标日资格检查后，目标日覆盖仍均为 1,020／1,020，完整 120 日历史分别为
+  云端 994／1,020、本地 995／1,020。逐套比对 1,020 条记录的匹配、原因和可用会话数，差异限于 SNDK。
+  云端逐股证据明确记录 `YAHOO_REGULAR_HISTORY_GAP 2/120`。
