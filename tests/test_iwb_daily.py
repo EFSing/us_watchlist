@@ -97,7 +97,7 @@ class IwbDailyTests(unittest.TestCase):
         self.assertEqual(run["session_close_utc"], "2025-11-28T18:00:00+00:00")
         self.assertEqual(run["report_sha256"], sha256((output / "report.html").read_bytes()).hexdigest())
         self.assertEqual(json.loads((output / "run.json").read_bytes()), run)
-        self.assertIn("研究效果: 未验证", (output / "report.html").read_text(encoding="utf-8"))
+        self.assertIn("研究效果未验证", (output / "report.html").read_text(encoding="utf-8"))
         with self.assertRaisesRegex(ValueError, "identity already used"):
             observe_iwb(TARGET, self.pool, output, "b" * 40)
 

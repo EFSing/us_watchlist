@@ -36,18 +36,20 @@ class BReplayTests(unittest.TestCase):
             output = Path(directory)
             path = run_b_offline(CONFIG, output)
             html = path.read_text(encoding="utf-8")
+            self.assertIn(">DEMOA</h3>", html)
+            self.assertIn("突破回踩形态匹配</span>", html)
             for symbol, status, available in (
-                ("DEMOA", "SHAPE_MATCH", 76),
-                ("DEMOB", "NO_QUALIFYING_BREAKOUT", 76),
-                ("DEMOC", "INCOMPLETE_HISTORY", 75),
-                ("DEMOD", "FIRST_BREAKOUT_RETEST_FAILED", 76),
+                ("DEMOB", "未找到符合条件的放量突破", 76),
+                ("DEMOC", "所需历史行情不足", 75),
+                ("DEMOD", "首次合格突破后的回踩未达条件", 76),
             ):
                 with self.subTest(symbol=symbol):
-                    self.assertIn(f"<th scope='row'>{symbol}</th><td>{status}</td><td>{available}</td>", html)
+                    self.assertRegex(html, rf'<th scope="row">{symbol}</th><td>{status}.*?</td><td>{available}</td>')
             self.assertNotIn("DEMOE-WI", html)
             self.assertNotIn("DEMOF", html)
-            self.assertIn("Matches: 1", html)
-            self.assertIn("Regular session · synthetic", html)
+            self.assertIn("<strong>1 只</strong><small>形态匹配", html)
+            self.assertIn("常规交易时段", html)
+            self.assertIn("合成样本", html)
             self.assertEqual(path, run_b_offline(CONFIG, output))
             self.assertEqual(list(path.parent.iterdir()), [path])
 
