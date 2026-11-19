@@ -8,6 +8,8 @@ from datetime import UTC, date, datetime
 from hashlib import sha256
 from io import BytesIO, StringIO
 from pathlib import Path
+from time import sleep
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from zipfile import BadZipFile, ZipFile, ZIP_DEFLATED
@@ -167,19 +169,34 @@ def versions(root: Path, through: date) -> tuple[tuple[date, Path], ...]:
     return tuple(sorted(dated))
 
 
+def _download(url: str) -> bytes:
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*;q=0.1"})
+    for attempt in range(2):
+        try:
+            with urlopen(request, timeout=20) as response:
+                if response.geturl() != url or response.headers.get_content_type() not in {
+                    "text/csv", "text/plain", "application/csv", "application/octet-stream",
+                }:
+                    raise ValueError("IWB_UNEXPECTED_DOWNLOAD_SOURCE_OR_TYPE")
+                raw = response.read(MAX_CSV_BYTES + 1)
+            if len(raw) > MAX_CSV_BYTES:
+                raise ValueError("IWB_DOWNLOAD_TOO_LARGE")
+            return raw
+        except HTTPError as error:
+            if attempt or error.code not in {429, 500, 502, 503, 504}:
+                raise ValueError(f"IWB_HTTP_{error.code}") from None
+        except (URLError, TimeoutError, OSError) as error:
+            if attempt:
+                raise ValueError(f"IWB_NETWORK_{type(error).__name__}") from None
+        sleep(5)
+    raise AssertionError("IWB request exhausted its retry loop")
+
+
 def refresh_holdings(root: Path, requested: date | None, through: date) -> tuple[Path, HoldingsVersion]:
     if requested is not None and requested > through:
         raise ValueError("IWB_REQUEST_LATER_THAN_TARGET")
     url = _source(requested)
-    request = Request(url, headers={"User-Agent": "Mozilla/5.0", "Accept": "text/csv,*/*;q=0.1"})
-    with urlopen(request, timeout=20) as response:
-        if response.geturl() != url or response.headers.get_content_type() not in {
-            "text/csv", "text/plain", "application/csv", "application/octet-stream",
-        }:
-            raise ValueError("IWB_UNEXPECTED_DOWNLOAD_SOURCE_OR_TYPE")
-        raw = response.read(MAX_CSV_BYTES + 1)
-    if len(raw) > MAX_CSV_BYTES:
-        raise ValueError("IWB_DOWNLOAD_TOO_LARGE")
+    raw = _download(url)
     acquired = datetime.now(UTC)
     digest = sha256(raw).hexdigest()
     version = parse_holdings(raw, Provenance(url, digest, acquired))

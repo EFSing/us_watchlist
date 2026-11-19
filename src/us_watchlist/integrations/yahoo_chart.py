@@ -7,6 +7,7 @@ from decimal import Decimal
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
+from time import monotonic, sleep
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlencode
 from urllib.request import Request, urlopen
@@ -23,6 +24,11 @@ SOURCE = "Yahoo Chart v8 · quote OHLCV (dividend-adjusted close excluded)"
 SCHEMA = "us_yahoo_chart_observation_v1"
 IWB_SCHEMA = "us_yahoo_chart_iwb_observation_v1"
 FIELDS = ("open", "high", "low", "close", "volume")
+IWB_CAPTURE_SECONDS = 600
+
+
+def wait_before_recapture() -> None:
+    sleep(75)
 
 
 def _epoch(day: date) -> int:
@@ -74,25 +80,29 @@ def capture_yahoo(
     through = started.date()
     records = []
     buffer = BytesIO()
+    deadline = monotonic() + IWB_CAPTURE_SECONDS
     with ZipFile(buffer, "w", compression=ZIP_DEFLATED) as archive:
         with ThreadPoolExecutor(max_workers=6) as executor:
-            stop = False
+            stop_reason = ""
             for offset in range(0, len(symbols), 24):
                 batch = symbols[offset:offset + 24]
-                if stop:
-                    records.extend({"symbol": symbol, "attempts": ["NOT_REQUESTED_RATE_LIMIT"]} for symbol in batch)
-                    continue
+                if official_iwb and not stop_reason and monotonic() >= deadline:
+                    stop_reason = "NOT_REQUESTED_CAPTURE_DEADLINE"
+                if stop_reason:
+                    records.extend({"symbol": symbol, "attempts": [stop_reason]} for symbol in symbols[offset:])
+                    break
                 replies = tuple(executor.map(lambda symbol: _fetch(symbol, first, through), batch))
                 for record, body in replies:
                     if body is not None:
                         archive.writestr(f"quotes/{record['symbol']}.json", body)
                     records.append(record)
-                stop = all(
+                if all(
                     body is None and all(attempt.endswith("HTTP_429") for attempt in record["attempts"])
                     for record, body in replies
-                )
+                ):
+                    stop_reason = "NOT_REQUESTED_RATE_LIMIT"
         observed = datetime.now(UTC)
-        if observed.date() != through:
+        if not official_iwb and observed.date() != through:
             raise ValueError("Yahoo capture crossed the UTC date boundary; capture again")
         identity_key = "holdings_sha256" if official_iwb else "candidate_sha256"
         archive.writestr("manifest.json", json.dumps({
@@ -182,7 +192,8 @@ def read_yahoo(
         observed = datetime.fromisoformat(receipt["observed_at"])
         require_utc(started)
         require_utc(observed)
-        if not universe.available_at <= started <= observed <= datetime.now(UTC) or started.date() != observed.date():
+        if (not universe.available_at <= started <= observed <= datetime.now(UTC)
+            or (not official_iwb and started.date() != observed.date())):
             raise ValueError("Yahoo capture was outside the observable universe/time window")
         windows = {}
         for day, opening, closing in receipt["windows"]:
