@@ -105,7 +105,7 @@ class BReplayTests(unittest.TestCase):
     def test_first_breakout_cannot_be_replaced_with_a_later_match(self):
         d = self.run_input
         history = regular_history(d.history, d.target_date, ("DEMOA",), d.cutoff, d.adjustments_known_at)
-        changed = list(history)
+        changed = list(history[-76:])
         for i, close, volume in ((61, "52", 180), (74, "54", 250), (75, "54", 100)):
             snapshot = changed[i]
             changed[i] = replace(

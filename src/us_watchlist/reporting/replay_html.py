@@ -28,7 +28,7 @@ def _table(rows: tuple[Evaluation, ...]) -> str:
 <tbody>{body}</tbody></table></div>"""
 
 
-def _section(result: ScreeningResult, evidence: ReplayEvidence) -> str:
+def _section(result: ScreeningResult, evidence: ReplayEvidence, *, anchored: bool) -> str:
     name = escape(result.strategy.name)
     version = escape(result.strategy.version)
     matches = tuple(row for row in result.evaluations if row.signal is not None)
@@ -63,7 +63,8 @@ def _section(result: ScreeningResult, evidence: ReplayEvidence) -> str:
             "structure": dict(row.structure), "volume": dict(row.volume),
         } for row in result.evaluations],
     }, default=str, ensure_ascii=True, allow_nan=False).replace("<", "\\u003c")
-    return f"""<section>
+    anchor = f' id="{version}"' if anchored else ""
+    return f"""<section{anchor}>
 <h2>{name} <small>{version}</small></h2>
 <p><strong>{status}</strong></p>
 {body}
@@ -73,6 +74,7 @@ def _section(result: ScreeningResult, evidence: ReplayEvidence) -> str:
 
 def render_replay(
     evidence: ReplayEvidence, results: tuple[ScreeningResult, ...], *, title: str = "US B shape diagnostic",
+    summary: str = "",
 ) -> str:
     title = escape(title)
     observed = escape(evidence.mode)
@@ -89,7 +91,7 @@ def render_replay(
     adjustments = (
         evidence.adjustments_known_at.isoformat() if evidence.adjustments_known_at else "Unverified at target close"
     )
-    sections = "\n".join(_section(result, evidence) for result in results)
+    sections = "\n".join(_section(result, evidence, anchored=bool(summary)) for result in results)
     return f"""<!doctype html>
 <html lang="en">
 <head>
@@ -116,7 +118,7 @@ thead {{ background: #eaf1f7; }}
 <h1>{title} · {evidence.trade_date}</h1>
 <p>Regular session · {observed} · Candidate universe: {evidence.candidate_size}</p>
 <p>{timing}</p>
-<details class="evidence"><summary>Input evidence</summary>
+{summary}<details class="evidence"><summary>Input evidence</summary>
 <dl>
 <dt>Decision / observation cutoff (UTC)</dt><dd>{evidence.cutoff.isoformat()}</dd>
 <dt>Candidate report date and status</dt><dd>{evidence.candidate_date} · {escape(evidence.candidate_status)}</dd>
@@ -137,3 +139,25 @@ thead {{ background: #eaf1f7; }}
 {sections}
 </main></body></html>
 """
+
+
+def render_joint_replay(
+    evidence: ReplayEvidence, b: ScreeningResult, c: tuple[ScreeningResult, ...],
+) -> str:
+    results = (b, *c)
+    links = " · ".join(
+        f'<a href="#{escape(item.strategy.version)}">{escape(item.strategy.name)}</a>' for item in results
+    )
+    c_rows = tuple(row for item in c for row in item.evaluations)
+    c_matches = {row.symbol for row in c_rows if row.signal is not None}
+    c_summary = (
+        f"C matches from available rule results: {len(c_matches)} unique symbol(s)."
+        if any(row.reason != "INCOMPLETE_HISTORY" for row in c_rows) else "C rule results unavailable."
+    )
+    summary = (
+        "<p>B reports the 76-session breakout/retest shape. "
+        "C reports trend, pullback, support and rebound confirmation with descriptive volume.</p>"
+        f"<p>{c_summary}</p>"
+        f'<nav aria-label="Strategy results">{links}</nav>\n'
+    )
+    return render_replay(evidence, results, title="US B+C offline daily report", summary=summary)
