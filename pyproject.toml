@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools==80.9.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "us-watchlist"
+version = "0.1.0"
+description = "Offline engineering skeleton for a US equities trading system"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = []
+
+[project.scripts]
+us-watchlist = "us_watchlist.app.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["us_watchlist*"]

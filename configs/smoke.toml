@@ -1,0 +1,37 @@
+# Deliberately synthetic input. Windows are fixture values, independent of exchange schedules.
+market = "US"
+purpose = "synthetic_smoke"
+cutoff = 2026-01-05T21:10:00Z
+
+[session]
+trading_date = 2026-01-05
+kind = "regular"
+opens_at = 2026-01-05T14:30:00Z
+closes_at = 2026-01-05T21:00:00Z
+
+[universe]
+effective_date = 2026-01-05
+members = [
+  { symbol = "DEMOA", active = true },
+  { symbol = "DEMOB", active = true },
+  { symbol = "DEMOC", active = false },
+  { symbol = "DEMOD", active = true },
+]
+
+[universe.provenance]
+source = "synthetic universe"
+snapshot_id = "smoke-universe-1"
+available_at = 2026-01-05T14:00:00Z
+
+[market_data]
+price_basis = "raw"
+bars = [
+  { symbol = "DEMOA", open = 11, high = 12, low = 10, close = 11.25, volume = 220 },
+  { symbol = "DEMOB", open = 20, high = 22, low = 19, close = 21, volume = 140 },
+  { symbol = "DEMOC", open = 30, high = 31, low = 28, close = 29, volume = 50 },
+]
+
+[market_data.provenance]
+source = "synthetic quotes"
+snapshot_id = "smoke-market-1"
+available_at = 2026-01-05T21:05:00Z
