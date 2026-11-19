@@ -119,11 +119,15 @@ def _pill(label: str, *, warning: bool = False) -> str:
 
 def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, research: ReplayResearch | None) -> str:
     if iwb := evidence.iwb:
-        facts = _facts((
+        coverage = (
             ("IWB 权益基池", f"{evidence.seed_size:,} 只"),
             ("有有效上市市场", f"{evidence.active_size:,} 只"),
             ("当日行情覆盖", f"{iwb.target_bars:,} / {evidence.active_size:,}"),
-        ))
+        )
+        if iwb.full_history_symbols is not None:
+            coverage += ((f"{evidence.expected_sessions} 日完整历史",
+                          f"{iwb.full_history_symbols:,} / {evidence.active_size:,}"),)
+        facts = _facts(coverage)
         lead = "IWB 官方基池覆盖"
         status = STATUS.get(iwb.status, "见审计记录")
     else:

@@ -1,8 +1,8 @@
 # 跨设备恢复
 
-从 `main` 恢复。2026-11-19 已核对远端默认分支 `main` 为
-`60c04f24986cf90ad65fd7a52322041aa980edc7`，#1～#6 均已合并，六个合并提交的 CI 均成功。
-`PROJECT_GOVERNANCE_STATE_CONFLICT` 已核对。下方 Draft 快照属于合并前审阅，当前操作依据为本节和
+从远端默认分支 `main` 恢复。以 GitHub 上的分支 HEAD、PR 合并提交和对应 push CI 为准。
+恢复时核对 [main 提交](https://github.com/EFSing/us_watchlist/commits/main/)、
+[main CI](https://github.com/EFSing/us_watchlist/actions/workflows/ci.yml?branch=main)和
 [当前状态](docs/CURRENT_STATUS.md)。
 
 | 已合并 PR | `main` 合并提交 | 合并 CI |
@@ -13,14 +13,36 @@
 | [#4](https://github.com/EFSing/us_watchlist/pull/4) | `d7fdcaff839df0c5941f7c6b2497ad14de42393c` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44472675353) |
 | [#5](https://github.com/EFSing/us_watchlist/pull/5) | `75074995e1f7c6b0424dd2592696a8bd5f1cfbc0` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44472860181) |
 | [#6](https://github.com/EFSing/us_watchlist/pull/6) | `60c04f24986cf90ad65fd7a52322041aa980edc7` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44473004144) |
+| [#8](https://github.com/EFSing/us_watchlist/pull/8) | `5875fb9b671e634382aa718555d0eeaffc519cad` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44483134656) |
+| [#7](https://github.com/EFSing/us_watchlist/pull/7) | `daca05278c0082ce00518c145a244a029d84ee90` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44483393328) |
+| [#9](https://github.com/EFSing/us_watchlist/pull/9) | [PR 合并记录](https://github.com/EFSing/us_watchlist/pull/9) | [按合并 SHA 核对 main push CI](https://github.com/EFSing/us_watchlist/actions/workflows/ci.yml?branch=main) |
+
+`PROJECT_GOVERNANCE_STATE_CONFLICT` 已通过 #8 处理。合并前 `main` 的恢复文档仍将 #1～#6 列为
+Draft，GitHub 确认它们已合并且对应 CI 成功。旧审阅状态保留在下方快照。
+
+#9 将纽约工作日 17:37 的 B+C 研究日报配置纳入 `main`。核对 `main` CI 和工作流后，按本轮授权设置
+`US_IWB_SCHEDULE_ENABLED=true`。每次恢复以 [仓库 Actions 变量](https://github.com/EFSing/us_watchlist/settings/variables/actions)
+的实际值和 [日报工作流状态](https://github.com/EFSing/us_watchlist/actions/workflows/iwb-daily.yml) 为准。
+首个 XNYS 交易日的自然 `schedule` 新采集待验收，记录实际时间、覆盖、逐股异常、研究结果和归档 SHA-256。
+每周在 7 天诊断到期前导出证据，每月封存并抽样复验，长期位置须经批准。
+见 [首次定时验收](docs/IWB_AUTOMATION.md#首次定时验收)及[长期证据](docs/IWB_AUTOMATION.md#长期前瞻研究证据)。
+
+## 2026-11-18 手动验收快照
 
 2026-11-18 的 hosted runner 手动验收已完成，仅从 `main` 派发一次，持仓日期留空。
-覆盖 1,020／1,020，B 31、C 均衡 3、C 保守 0，三个私有产物已下载并校验。
-已具备单独申请每日定时的运行证据，实际启用待授权。正式定时和通知关闭，IBKR 执行未接入。
+目标日覆盖 1,020／1,020，B 31、C 均衡 3、C 保守 0，三个私有产物已下载并校验。
+SNDK 云端原件只有两个交易日行情，三套规则各多一条历史不足。
 详见 [验收与恢复](docs/IWB_AUTOMATION.md#2026-11-18-hosted-runner-验收)和 [Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44476972797)。
 
-当前独立审阅分支为 `codex/iwb-hosted-acceptance-governance`（本次治理及验收证据）和
-`codex/iwb-c-reference-stop-risk`（C 止损距离与研究风险警示）。[C 审阅 PR #7](https://github.com/EFSing/us_watchlist/pull/7)
+## #8、#7、#9 初始审阅快照
+
+#8 与 #7 基于 #6 的合并提交，改动文件互不重叠。#9 草稿以 #8 的审阅 HEAD 为基线。
+
+| 审阅项 | HEAD | 精确 HEAD 的 PR CI |
+| --- | --- | --- |
+| [#8 治理与手动验收](https://github.com/EFSing/us_watchlist/pull/8) | `ac0b071808d4c85b0432793bf877dc98cab17f1d` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44478000058) |
+| [#7 C 止损距离](https://github.com/EFSing/us_watchlist/pull/7) | `6175df50d5e0ce2e71def1237ead9ef0d446d4d9` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44477617153) |
+| [#9 定时草稿](https://github.com/EFSing/us_watchlist/pull/9) | `b6c2e7841279e988721ac943d96122d169e8b088` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44481801423) |
 
 ## 合并前审阅快照
 

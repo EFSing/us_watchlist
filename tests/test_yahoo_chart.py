@@ -7,6 +7,7 @@ from unittest.mock import patch
 from zipfile import ZipFile
 
 from us_watchlist.domain.models import Provenance, SessionKind, SessionWindow
+from us_watchlist.integrations.xnys import regular_windows
 from us_watchlist.integrations.yahoo_chart import _quote_rows, capture_yahoo, read_yahoo
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -19,10 +20,12 @@ def session(day: date) -> SessionWindow:
     )
 
 
-def response(stamps: list[int], symbol: str = "ABC", splits: tuple[int, ...] = ()) -> bytes:
+def response(
+    stamps: list[int], symbol: str = "ABC", splits: tuple[int, ...] = (), *, market_time: int | None = None,
+) -> bytes:
     return json.dumps({"chart": {"error": None, "result": [{
         "meta": {"symbol": symbol, "currency": "USD", "instrumentType": "EQUITY",
-                 "exchangeTimezoneName": "America/New_York", "dataGranularity": "1d"},
+                 "exchangeTimezoneName": "America/New_York", "dataGranularity": "1d", "regularMarketTime": market_time},
         "timestamp": stamps,
         "events": {"splits": {str(t): {"date": t} for t in splits}},
         "indicators": {
@@ -34,6 +37,27 @@ def response(stamps: list[int], symbol: str = "ABC", splits: tuple[int, ...] = (
 
 
 class YahooChartTests(unittest.TestCase):
+    def test_schedule_withholds_target_bar_without_current_session_close_confirmation(self):
+        target = date(2025, 11, 28)
+        windows = regular_windows(target, 2)
+        history = {window.trading_date: window for window in windows}
+        stamps = [int(window.opens_at.timestamp()) for window in windows]
+        close = int(windows[-1].closes_at.timestamp())
+        received = datetime(2025, 11, 28, 22, 40, tzinfo=UTC)
+        for timestamp in (None, close - 1, int(received.timestamp()) + 1):
+            with self.subTest(timestamp=timestamp):
+                payload = response(stamps, market_time=timestamp)
+                rows, gap = _quote_rows("ABC", payload, history, target, target_received_at=received)
+                self.assertEqual(list(rows), [windows[0].trading_date])
+                self.assertEqual(gap, "YAHOO_TARGET_CLOSE_UNCONFIRMED")
+                self.assertIn(target, _quote_rows("ABC", payload, history, target)[0])
+        payload = response(stamps, market_time=close)
+        self.assertEqual(_quote_rows("ABC", payload, history, target, target_received_at=received)[1], "")
+        self.assertIn(target, _quote_rows("ABC", payload, history, target, target_received_at=received)[0])
+        next_date = received + timedelta(days=1)
+        payload = response(stamps, market_time=int(next_date.timestamp()))
+        self.assertNotIn(target, _quote_rows("ABC", payload, history, target, target_received_at=next_date)[0])
+
     def test_quote_uses_regular_unadjusted_for_dividends_and_trims_splits_and_post_target_bars(self):
         first, second, later = (session(date(2026, 11, day)) for day in (13, 16, 17))
         windows = {window.trading_date: window for window in (first, second)}

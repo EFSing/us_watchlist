@@ -37,6 +37,7 @@ class IwbReportEvidence:
     max_age_days: int
     target_bars: int
     status: str
+    full_history_symbols: int | None = None
 
 
 @dataclass(frozen=True)

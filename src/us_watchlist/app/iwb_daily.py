@@ -1,6 +1,7 @@
 """Select a local IWB version and observe a completed XNYS session with B and C."""
 
 import json
+from collections import Counter
 from dataclasses import replace
 from datetime import UTC, date, datetime
 from hashlib import sha256
@@ -91,7 +92,9 @@ def update_pool(root: Path, requested: date | None) -> dict:
     }
 
 
-def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = None) -> dict:
+def observe_iwb(
+    target: date, pool: Path, output: Path, code_sha: str | None = None, *, require_yahoo_close: bool = False,
+) -> dict:
     now = datetime.now(UTC)
     session, = regular_windows(target, 1)
     if session.closes_at >= now:
@@ -123,6 +126,8 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
         "excluded_non_equity_rows": holdings.non_equity_rows, "inactive_equities": dict(holdings.inactive),
         "history_sessions": HISTORY_SESSIONS, "minimum_target_coverage_percent": MIN_TARGET_COVERAGE_PERCENT,
     }
+    if require_yahoo_close:
+        plan["yahoo_target_close_confirmation"] = "REGULAR_MARKET_TIME_AT_OR_AFTER_XNYS_CLOSE"
     publish_once(output / "plan.json", encode_receipt(plan))
     quote_path = output / "yahoo.zip"
     if not quote_path.is_file():
@@ -131,6 +136,7 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
     digest = sha256(quotes).hexdigest()
     history, observed, calendar, gaps = read_yahoo(
         quotes, digest, target, symbols, snapshot.provenance, official_iwb=True,
+        require_target_close=require_yahoo_close,
     )
     if len(history) != HISTORY_SESSIONS:
         raise ValueError("IWB_DAILY_YAHOO_SESSION_COUNT_MISMATCH")
@@ -147,6 +153,8 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
         "iwb_yahoo_observation", target, observed, pool_data, history, None, input_sha, calendar, gaps,
     ))
     target_bars = {bar.symbol for bar in inputs.history[-1].bars}
+    history_counts = Counter(bar.symbol for snapshot in inputs.history for bar in snapshot.bars)
+    full_history = sum(count == HISTORY_SESSIONS for count in history_counts.values())
     b, c = evaluate_joint(inputs)
     failed = any(result.error is not None for result in (b, *c))
     coverage_ok = len(target_bars) * 100 >= len(symbols) * MIN_TARGET_COVERAGE_PERCENT
@@ -162,7 +170,7 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
     else:
         status = "PARTIAL_COVERAGE" if partial else "SUCCESS"
     evidence = replace(evidence, iwb=IwbReportEvidence(
-        holdings.inactive, holdings.non_equity_rows, MAX_AGE_DAYS, len(target_bars), status,
+        holdings.inactive, holdings.non_equity_rows, MAX_AGE_DAYS, len(target_bars), status, full_history,
     ))
     research = observe_joint(evidence, inputs, b, c)
     report = render_joint_replay(evidence, b, c, research=research).encode("utf-8")
@@ -171,6 +179,7 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
     run = {
         **inputs_record, "schema": "us_iwb_daily_run_v1", "input_sha256": input_sha,
         "report_sha256": report_sha, "status": status, "target_bars": len(target_bars),
+        "full_history_symbols": full_history,
         "missing_target_bars": sorted(set(symbols) - target_bars), "symbol_diagnostics": dict(gaps),
         "strategies": {result.strategy.version: {
             "matches": sum(row.signal is not None for row in result.evaluations),

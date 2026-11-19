@@ -73,7 +73,7 @@ def main() -> int:
             write_workflow_outputs(outputs)
             print(json.dumps(state, ensure_ascii=True))
             return int(state["status"] not in PUBLISHABLE | {
-                "REUSED_PUBLISHED_REPORT", "SKIPPED_NOT_READY", "SKIPPED_XNYS_CLOSED",
+                "REUSED_PUBLISHED_REPORT", "SKIPPED_XNYS_CLOSED",
             })
         else:
             print(run_smoke(args.config, Path(".runtime/artifacts/smoke")))

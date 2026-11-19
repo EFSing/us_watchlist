@@ -4,6 +4,7 @@ import json
 import os
 import re
 from dataclasses import dataclass
+from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path
@@ -13,6 +14,7 @@ from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
 from zipfile import BadZipFile, ZipFile
 
+from us_watchlist.domain.models import require_utc
 from us_watchlist.integrations.local_artifacts import publish_once
 
 MAX_ARTIFACT_BYTES = 32 * 1024 * 1024
@@ -33,7 +35,8 @@ class GitHubArtifacts:
             raise ValueError("GITHUB_INVALID_REPOSITORY")
         self.token = os.environ["GH_TOKEN"]
         self.branch = os.environ["IWB_DEFAULT_BRANCH"]
-        self.root = f"https://api.github.com/repos/{self.repo}/actions/artifacts"
+        self.actions_root = f"https://api.github.com/repos/{self.repo}/actions"
+        self.root = f"{self.actions_root}/artifacts"
 
     def _read(self, url: str) -> bytes:
         request = Request(url, headers={
@@ -62,6 +65,19 @@ class GitHubArtifacts:
                     raise ValueError(f"GITHUB_ARTIFACT_NETWORK_{type(error).__name__}") from None
             sleep(delay)
         raise AssertionError("GitHub request exhausted its retry loop")
+
+    def schedule_created_at(self, code_sha: str) -> datetime:
+        run_id = int(os.environ["GITHUB_RUN_ID"])
+        if run_id <= 0:
+            raise ValueError("GITHUB_INVALID_RUN_ID")
+        run = json.loads(self._read(f"{self.actions_root}/runs/{run_id}"))
+        if (run["id"], run["event"], run["head_branch"], run["head_sha"]) != (
+            run_id, "schedule", self.branch, code_sha,
+        ):
+            raise ValueError("GITHUB_SCHEDULE_RUN_MISMATCH")
+        created = datetime.fromisoformat(run["created_at"])
+        require_utc(created)
+        return created
 
     def catalog(self) -> dict[str, Artifact]:
         selected = {}
