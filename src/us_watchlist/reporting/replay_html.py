@@ -5,9 +5,11 @@ from collections import Counter
 from dataclasses import asdict, dataclass
 from html import escape
 
+from us_watchlist.domain.replay_research import CandidateResearch, ReplayResearch
 from us_watchlist.domain.screening import Evaluation, Metrics, ReplayEvidence, ScreeningResult
-from us_watchlist.reporting.replay_assets import SCRIPT, STYLE
+from us_watchlist.reporting.replay_assets import RESEARCH_STYLE, SCRIPT, STYLE
 from us_watchlist.reporting.replay_labels import REASON, STATUS, data_gap, metric_cells
+from us_watchlist.reporting.research_html import candidate_research, research_definitions, research_summary
 
 
 _B = "us_breakout_retest_shape_v1"
@@ -85,9 +87,9 @@ def _reason(code: str) -> str:
     return REASON.get(code, "其他情形（见原始记录）")
 
 
-def _json_record(record: dict, *, strategy: str = "") -> str:
+def _json_record(record: dict, *, strategy: str = "", record_id: str = "record-input") -> str:
     payload = json.dumps(record, default=str, ensure_ascii=True, allow_nan=False).replace("<", "\\u003c")
-    attribute = f'data-strategy="{strategy}"' if strategy else 'id="record-input"'
+    attribute = f'data-strategy="{strategy}"' if strategy else f'id="{record_id}"'
     return f'<script type="application/json" {attribute}>{payload}</script>'
 
 
@@ -115,7 +117,7 @@ def _pill(label: str, *, warning: bool = False) -> str:
     return f'<span class="pill{tone}">{label}</span>'
 
 
-def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> str:
+def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, research: ReplayResearch | None) -> str:
     if iwb := evidence.iwb:
         facts = _facts((
             ("IWB 权益基池", f"{evidence.seed_size:,} 只"),
@@ -141,6 +143,7 @@ def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> 
             note = f"历史不足 {rule.reasons['INCOMPLETE_HISTORY']:,} 只"
         cards.append(f'<a href="#{rule.version}"><span>{rule.label}</span>'
                      f'<strong>{count}</strong><small>{rule.match_label} · {note}</small></a>')
+    study = "\n" + research_summary(research, _B) if research is not None else ""
     return f"""<section id="overview" class="panel">
 <div class="section-head"><h2>今日总览</h2>{_pill(f"数据状态 · {status}", warning=status != "完成")}</div>
 <div class="overview-grid">
@@ -149,7 +152,7 @@ def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> 
   <dl class="overview-facts">{facts}</dl>
 </div>
 <div class="decision-grid" style="--rule-count:{len(rules)}">{"".join(cards)}</div>
-<div class="callout warning"><strong>研究效果未验证</strong><p>{risk}</p></div>
+<div class="callout warning"><strong>研究效果未验证</strong><p>{risk}</p></div>{study}
 </section>"""
 
 
@@ -196,27 +199,39 @@ def _metrics_for(metrics: Metrics, keys: tuple[str, ...]) -> tuple[Metrics, Metr
     )
 
 
-def _card(row: Evaluation, rule: _Rule) -> str:
-    is_b = rule.result.strategy.version == _B
-    heading = "h3" if is_b else "h4"
+def _legacy_card_body(row: Evaluation, *, is_b: bool) -> str:
     structure_keys, volume_keys = _HIGHLIGHTS["B" if is_b else "C"]
     structure, extra_structure = _metrics_for(row.structure, structure_keys)
     volume, extra_volume = _metrics_for(row.volume, volume_keys)
-    symbol = escape(row.symbol)
     volume_note = "检查突破放量和回踩缩量。" if is_b else "量能描述当日与回踩期间的交易活跃度。"
     more = ""
     if extra_structure or extra_volume or row.data_gap:
         gap = f"<p>{escape(data_gap(row.data_gap))}</p>" if row.data_gap else ""
         more = f"""<details><summary>展开其余结构与量能指标</summary>
 <dl class="metrics">{metric_cells(extra_structure + extra_volume)}</dl>{gap}</details>"""
-    return f"""<article class="watch-card" id="{rule.version}-{symbol}">
-<div class="watch-head"><{heading}>{symbol}</{heading}>{_pill(_reason(row.reason))}</div>
-<div class="watch-columns">
+    return f"""<div class="watch-columns">
  <div class="watch-facts"><strong>价格结构</strong><dl class="metrics">{metric_cells(structure)}</dl></div>
  <div class="volume-card"><strong>量能</strong><p class="note">{volume_note}</p>
  <dl class="metrics">{metric_cells(volume, bars=True)}</dl></div>
 </div>
-{more}
+{more}"""
+
+
+def _card(row: Evaluation, rule: _Rule, study: CandidateResearch | None) -> str:
+    is_b = rule.result.strategy.version == _B
+    heading = "h3" if is_b else "h4"
+    symbol = escape(row.symbol)
+    if study is None:
+        body = _legacy_card_body(row, is_b=is_b)
+    else:
+        body = f"""{candidate_research(study, is_b=is_b)}
+<details><summary>原始结构、补充量能与计算定义</summary>
+{research_definitions(study, is_b=is_b)}
+<dl class="metrics">{metric_cells(row.structure + row.volume)}</dl>
+</details>"""
+    return f"""<article class="watch-card" id="{rule.version}-{symbol}">
+<div class="watch-head"><{heading}>{symbol}</{heading}>{_pill(_reason(row.reason))}</div>
+{body}
 </article>"""
 
 
@@ -246,8 +261,9 @@ def _other_results(rule: _Rule) -> str:
 </div></details>"""
 
 
-def _rule_section(rule: _Rule, heading: str) -> str:
-    content = "".join(_card(row, rule) for row in rule.matches)
+def _rule_section(rule: _Rule, heading: str, studies: dict[tuple[str, str], CandidateResearch]) -> str:
+    version = rule.result.strategy.version
+    content = "".join(_card(row, rule, studies.get((version, row.symbol))) for row in rule.matches)
     if not content:
         message = {
             "FAILED": "该规则执行失败。原始异常见审计区。",
@@ -263,7 +279,7 @@ def _rule_section(rule: _Rule, heading: str) -> str:
 </div>"""
 
 
-def _audit(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> str:
+def _audit(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, research: ReplayResearch | None) -> str:
     seed_label = "IWB 官方持仓" if evidence.iwb else "上游候选归档"
     history_source = evidence.history.source
     if history_source.startswith("Yahoo Chart v8"):
@@ -295,6 +311,15 @@ def _audit(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> str
                         for rule in rules)
     errors = "".join(f'<p class="raw-error">{rule.label} · {escape(rule.result.error)}</p>'
                      for rule in rules if rule.result.error is not None)
+    study_record = ""
+    if research is not None:
+        metadata += (("结构量能及参考计划版本", research.version), ("A 股公式参考提交", research.reference_commit))
+        downloads += '<button type="button" hidden data-record="record-research">结构量能与参考计划</button>'
+        study_record = "\n" + _json_record({
+            **asdict(research), "manifest_sha256": evidence.input_sha256, "trade_date": evidence.trade_date,
+            "cutoff": evidence.cutoff.isoformat(), "mode": evidence.mode, "price_basis": evidence.price_basis,
+            "research_effectiveness": "UNVERIFIED", "formal_us_b_qualification": "NOT_ESTABLISHED",
+        }, record_id="record-research")
     return f"""<details id="audit" class="panel fold">
 <summary>数据来源与技术审计</summary>
 <div class="fold-content">
@@ -306,27 +331,28 @@ def _audit(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str) -> str
 <p class="note">包含输入身份、规则状态，以及逐股原因、历史缺口、结构与量能的原始字段和精度。</p>
 <div class="toolbar"><button type="button" hidden data-record="record-input">输入证据</button>{downloads}</div>
 {_json_record(asdict(evidence))}
-{"".join(_strategy_record(rule, evidence) for rule in rules)}
+{"".join(_strategy_record(rule, evidence) for rule in rules)}{study_record}
 </div></details>"""
 
 
 def render_replay(
     evidence: ReplayEvidence, results: tuple[ScreeningResult, ...], *, title: str = "美股 B 形态日报",
-    summary: str = "",
+    summary: str = "", research: ReplayResearch | None = None,
 ) -> str:
     rules = tuple(_Rule.from_result(result) for result in results)
     # The joint entry point supplies B first, then each independently evaluated C rule.
     c_rules = rules[1:]
     risk, audit_risk = _risk(evidence)
     links = [("overview", "今日总览"), ("candidates", "今日候选")]
+    studies = {(row.strategy_version, row.symbol): row for row in research.candidates} if research else {}
     sections = ""
     if rules:
         links.append((rules[0].version, "B 形态"))
-        sections = f'<section class="panel">{_rule_section(rules[0], "h2")}</section>'
+        sections = f'<section class="panel">{_rule_section(rules[0], "h2", studies)}</section>'
     if c_rules:
         links.append(("c-results", "C 研究"))
         sections += ('<section id="c-results" class="panel"><div class="section-head"><h2>C 研究规则</h2></div>'
-                     + "".join(_rule_section(rule, "h3") for rule in c_rules) + "</section>")
+                     + "".join(_rule_section(rule, "h3", studies) for rule in c_rules) + "</section>")
     links.append(("audit", "数据审计"))
     nav = "".join(f'<a href="#{anchor}">{label}</a>' for anchor, label in links)
     return f"""<!doctype html>
@@ -335,7 +361,7 @@ def render_replay(
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} · {evidence.trade_date}</title>
-<style>{STYLE}</style>
+<style>{STYLE}{RESEARCH_STYLE if research else ""}</style>
 </head>
 <body><main>
 <header class="site-header">
@@ -344,17 +370,18 @@ def render_replay(
  <p class="date">交易日 <strong>{evidence.trade_date}</strong></p>
 </header>
 <nav class="section-nav" aria-label="日报章节导航">{nav}</nav>
-{_overview(evidence, rules, risk)}
+{_overview(evidence, rules, risk, research)}
 {_candidates(rules, c_rules)}
 {summary}
 {sections}
-{_audit(evidence, rules, audit_risk)}
+{_audit(evidence, rules, audit_risk, research)}
 </main><script>{SCRIPT}</script></body></html>
 """
 
 
 def render_joint_replay(
-    evidence: ReplayEvidence, b: ScreeningResult, c: tuple[ScreeningResult, ...],
+    evidence: ReplayEvidence, b: ScreeningResult, c: tuple[ScreeningResult, ...], *,
+    research: ReplayResearch | None = None,
 ) -> str:
     title = "美股收盘日报 · IWB" if evidence.iwb else "美股 B+C 离线日报"
-    return render_replay(evidence, (b, *c), title=title)
+    return render_replay(evidence, (b, *c), title=title, research=research)

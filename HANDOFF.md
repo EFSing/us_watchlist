@@ -1,13 +1,13 @@
 # 跨设备恢复
 
-从 `codex/us-iwb-daily-automation` 恢复日常审阅。审查和未来合并顺序为 [#1 工程骨架](https://github.com/EFSing/us_watchlist/pull/1) → [#2 共用行情和 B](https://github.com/EFSing/us_watchlist/pull/2) → [#3 C 和联合日报](https://github.com/EFSing/us_watchlist/pull/3) → [#4 IWB 官方基池及中文日报](https://github.com/EFSing/us_watchlist/pull/4) → [#5 独立日报自动化](https://github.com/EFSing/us_watchlist/pull/5)。合并前从 GitHub 重新核对各基线、HEAD 和 CI。若采用 squash 或 rebase，逐层更新后续 PR 基线并复核差异及 CI。
+从 `codex/us-research-daily-plans` 恢复本轮审阅。审查和未来合并顺序为 [#1 工程骨架](https://github.com/EFSing/us_watchlist/pull/1) → [#2 共用行情和 B](https://github.com/EFSing/us_watchlist/pull/2) → [#3 C 和联合日报](https://github.com/EFSing/us_watchlist/pull/3) → [#4 IWB 官方基池及中文日报](https://github.com/EFSing/us_watchlist/pull/4) → [#5 独立日报自动化](https://github.com/EFSing/us_watchlist/pull/5) → [结构、量能与参考计划 Draft](https://github.com/EFSing/us_watchlist/pulls?q=is%3Apr+head%3Acodex%2Fus-research-daily-plans)。合并前从 GitHub 重新核对各基线、HEAD 和 CI。若采用 squash 或 rebase，逐层更新后续 PR 基线并复核差异及 CI。
 
 本轮审计核验 #1 `b5e341b`、#2 `bbb43e5`、#3 `b3c085e` 的堆叠及 Windows／Linux CI。11-16 和 11-17 的 Candidate／Yahoo 观察以同一 SHA 的 HTML 重新生成。正式股票池决策更新为 iShares IWB 官方权益成份，历史 Candidate 入口保留原含义。[#1 CI](https://github.com/EFSing/us_watchlist/actions/runs/44282631026) · [#2 CI](https://github.com/EFSing/us_watchlist/actions/runs/44301101372) · [#3 CI](https://github.com/EFSing/us_watchlist/actions/runs/44311422189)
 
 全新 Windows 设备在唯一目标路径为空时执行。
 
 ```powershell
-git clone --branch codex/us-iwb-daily-automation https://github.com/EFSing/us_watchlist.git D:\ChatGPT\archive\us_stock_watchlist
+git clone --branch codex/us-research-daily-plans https://github.com/EFSing/us_watchlist.git D:\ChatGPT\archive\us_stock_watchlist
 Set-Location -LiteralPath D:\ChatGPT\archive\us_stock_watchlist
 git status --short --branch
 ```
@@ -18,5 +18,9 @@ git status --short --branch
 
 11-18 中文报告从同一份输入复渲染，位于本机 `.runtime/data/iwb-validation/2026-11-18-zh/report.html`。
 逐股机器记录及输入身份核验见 [中文日报复渲染](docs/IWB_DAILY.md#中文日报复渲染)。
+
+本轮 11-18 研究版在 `.runtime/data/iwb-validation/2026-11-18-research/report.html`。保留 B 31、C 3／0，
+增加 B 数值门槛 5／31、2→3 代理 9／31 及 B/C 参考计划。具体原因、冻结对照与截图见
+[B+C 参考研究](docs/BC_REFERENCE_RESEARCH.md)。下一步是独立审阅研究口径及正式资格边界。
 
 下一步是审查 Draft 栈。获得合并授权后，通过手动派发验证 hosted runner 的 Yahoo 和报告归档，再单独审查定时启用。当前生产调度和通知关闭。归档有限留存、补跑及恢复见 [自动化说明](docs/IWB_AUTOMATION.md)。长期归档、历史点时行情与拆股量能等待来源和存储决策。

@@ -50,6 +50,9 @@ HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用
 共同数据中的历史覆盖和结构。打开 `.runtime/artifacts/bc-offline/synthetic/` 下的 HTML
 查看候选与逐股诊断。实际输入、C 规则与观察结果见 [B+C 离线日报](docs/BC_OFFLINE.md)。
 
+匹配卡片展示价格结构、三项回踩量能及研究参考计划。指标、资格边界和冻结验证见
+[B+C 参考研究](docs/BC_REFERENCE_RESEARCH.md)。
+
 ## IWB 基础池与 B+C 日报
 
 `us-watchlist iwb-refresh` 下载并冻结官方 IWB 版本。`us-watchlist iwb-report --trade-date YYYY-MM-DD --output <目录>` 从可用本地版本出发，采集 Yahoo 常规会话行情并生成单文件报告。输入格式、数据门槛与真实验证见 [IWB 日报](docs/IWB_DAILY.md)。

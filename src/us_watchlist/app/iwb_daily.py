@@ -6,7 +6,7 @@ from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 
-from us_watchlist.app.bc_offline import evaluate_joint
+from us_watchlist.app.bc_offline import evaluate_joint, observe_joint
 from us_watchlist.app.replay import prepare_input
 from us_watchlist.domain.screening import IwbReportEvidence, ScreeningUniverse
 from us_watchlist.integrations.iwb_holdings import MAX_AGE_DAYS, read_holdings, refresh_holdings, versions
@@ -164,7 +164,8 @@ def observe_iwb(target: date, pool: Path, output: Path, code_sha: str | None = N
     evidence = replace(evidence, iwb=IwbReportEvidence(
         holdings.inactive, holdings.non_equity_rows, MAX_AGE_DAYS, len(target_bars), status,
     ))
-    report = render_joint_replay(evidence, b, c).encode("utf-8")
+    research = observe_joint(evidence, inputs, b, c)
+    report = render_joint_replay(evidence, b, c, research=research).encode("utf-8")
     report_sha = sha256(report).hexdigest()
     publish_once(output / "report.html", report)
     run = {

@@ -138,6 +138,42 @@ code { font-family: inherit; }
 }
 """
 
+RESEARCH_STYLE = """
+.research-stage {
+  display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 12px;
+  margin-bottom: 8px; padding: 7px 9px; background: #eef5f9; color: var(--accent);
+}
+.research-stage p { flex-basis: 100%; }
+.watch-research-grid { display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 6fr); gap: 8px; align-items: start; }
+.plan-prices { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 5px; margin: 8px 0; }
+.plan-prices div { padding: 5px 7px; background: var(--surface); border: 1px solid var(--border); min-width: 0; }
+.plan-prices dd { font-size: 18px; }
+.research-metric {
+  display: grid; grid-template-columns: minmax(0, 1fr) minmax(80px, .65fr) auto;
+  grid-template-areas: "label meter value" "explanation explanation explanation" "hypothesis hypothesis hypothesis";
+  gap: 2px 10px; margin-top: 7px; padding: 6px 0 0; border-top: 1px solid var(--border);
+}
+.research-metric dt { grid-area: label; color: var(--text); font-weight: bold; }
+.research-metric dd { grid-area: value; margin: 0; }
+.research-meter { grid-area: meter; align-self: center; }
+.ratio-track.share::after { display: none; }
+.research-metric p { grid-area: explanation; }
+.research-metric small { grid-area: hypothesis; color: var(--muted); }
+.research-coordinate { grid-column: 1 / -1; color: var(--accent); font-size: 13px; }
+.research-conclusion { margin-top: 8px; padding: 5px 7px; background: var(--surface); border-left: 2px solid var(--accent); font-size: 14px; }
+.research-conclusion p { margin: 2px 0 0; }
+@media (max-width: 1000px) {
+  .plan-prices { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .watch-research-grid { grid-template-columns: minmax(0, 1fr); }
+}
+@media (max-width: 480px) {
+  .research-metric { grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "label value" "meter meter" "explanation explanation" "hypothesis hypothesis"; }
+}
+"""
+
 SCRIPT = r"""
 const nav = [...document.querySelectorAll('.section-nav a')];
 function syncLocation() {
