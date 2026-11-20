@@ -13,12 +13,17 @@ def render_email_summary(report: dict) -> tuple[str, str, str]:
     day = report["trade_date"]
     status = "部分覆盖" if report["status"] == "PARTIAL_COVERAGE" else "完成"
     rows = [(label, report["strategies"][version]["matches"]) for version, label in _RULES]
+    full_history = report.get("full_history_symbols")
+    history_coverage = (
+        f"{full_history:,}/{report['listed_equities']:,}"
+        if full_history is not None else "旧版归档未记录"
+    )
     facts = [
         ("交易日", day),
         ("报告状态", status),
         ("IWB 股票池", f"{report['base_equities']:,} 只，符合上市条件 {report['listed_equities']:,} 只"),
         ("目标日行情", f"{report['target_bars']:,}/{report['listed_equities']:,}"),
-        ("120 日完整历史", f"{report['full_history_symbols']:,}/{report['listed_equities']:,}"),
+        ("120 日完整历史", history_coverage),
         *((label, f"{count} 只") for label, count in rows),
     ]
     summary = "\n".join(f"{label}：{value}" for label, value in facts)
