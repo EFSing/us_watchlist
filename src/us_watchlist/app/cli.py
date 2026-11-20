@@ -11,6 +11,7 @@ from us_watchlist.app.bc_offline import run_bc_offline
 from us_watchlist.app.iwb_automation import automate_iwb
 from us_watchlist.app.iwb_daily import DEFAULT_POOL, PUBLISHABLE, observe_iwb, update_pool, verify_completed
 from us_watchlist.app.iwb_notifications import send_iwb_email
+from us_watchlist.app.iwb_paper import replay_iwb
 from us_watchlist.app.smoke import run_smoke
 from us_watchlist.integrations.github_artifacts import GitHubArtifacts, write_workflow_outputs
 from us_watchlist.integrations.replay_input import yahoo_capture_request
@@ -49,6 +50,14 @@ def main() -> int:
     mail = subcommands.add_parser("iwb-email", help="Email one verified, archived IWB B+C report")
     mail.add_argument("--directory", type=Path, required=True)
     mail.add_argument("--trade-date", type=date.fromisoformat, required=True)
+    paper = subcommands.add_parser("iwb-paper", help="Replay or restore an offline IWB paper ledger")
+    paper.add_argument("--ledger-root", type=Path, required=True)
+    paper.add_argument("--start-date", type=date.fromisoformat, required=True)
+    paper.add_argument("--trade-date", type=date.fromisoformat, required=True)
+    paper.add_argument("--directory", type=Path, help="Verified IWB archive, omit to restore existing ledger")
+    paper.add_argument("--initialize", action="store_true", help="Explicitly create the first session")
+    paper.add_argument("--policy", type=Path, help="Explicit offline research parameters, omit for evidence only")
+    paper.add_argument("--expect-previous", help="Expected prior ledger SHA-256 from an independent receipt")
     args = parser.parse_args()
 
     try:
@@ -82,6 +91,12 @@ def main() -> int:
         elif args.command == "iwb-email":
             send_iwb_email(args.directory, args.trade_date)
             print(f"IWB_EMAIL_SENT {args.trade_date}")
+        elif args.command == "iwb-paper":
+            output, digest = replay_iwb(
+                args.ledger_root, args.start_date, args.trade_date, directory=args.directory, policy_path=args.policy,
+                initialize=args.initialize, expect_previous=args.expect_previous,
+            )
+            print(f"{output}\nPAPER_LEDGER_SHA256 {digest}")
         else:
             print(run_smoke(args.config, Path(".runtime/artifacts/smoke")))
     except (OSError, ImportError, KeyError, TypeError, ValueError, DecimalException) as error:

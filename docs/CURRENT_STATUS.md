@@ -9,7 +9,7 @@
 - 已实现 Python `src/` 模块化单体、九层依赖约束、四种独立时段和合成数据烟测。
 - 已提供包安装入口、合成配置、HTML 骨架、测试与 Windows／Linux GitHub Actions CI。
   具体执行结果见[审阅分支 Actions](https://github.com/EFSing/us_watchlist/actions?query=branch%3Acodex%2Fv1-project-bootstrap)。
-- 研究层示范描述性量能，跟踪层示范输入覆盖。正式策略、绩效观测和 IBKR 模拟适配待独立开发。
+- 研究层示范描述性量能，跟踪层保存烟测输入覆盖。正式策略绩效和 IBKR 模拟适配待独立开发。
 
 ## US Candidate 与 B 常规时段离线验证
 
@@ -47,9 +47,9 @@
   日报列出目标日覆盖、120 日完整历史覆盖和各规则历史不足，逐股保留缺口。定时执行状态以仓库变量
   `US_IWB_SCHEDULE_ENABLED` 的实际值为准。首个自然定时新采集待验收。
   [仓库变量](https://github.com/EFSing/us_watchlist/settings/variables/actions) · [运行手册](IWB_AUTOMATION.md#首次定时验收)
-- 邮件通知改动以独立审阅 PR 为准：可发布的日报在归档成功后通过 Gmail→QQ 发送中文摘要和完整 HTML 附件；
-  采集、归档或邮件失败时由后置作业发送 Bark，正常跳过不通知。实际使用前须在本仓库配置 `SMTP_*` 与
-  `BARK_ENDPOINT` Secrets，并分别验证真实收件和手机告警，不能仅凭合成测试声称送达。
+- #10 与 #11 已合并。2026-11-19 日报通过手动运行生成并归档，邮件步骤成功，Bark 失败分支按预期跳过。
+  B 匹配 CDW、DLTR、SIRI、VIK，B 数值通过及两组 C 匹配均为 0。该运行提供邮件工作流成功证据，收件端与 Bark
+  实际送达需各自的验收证据。[Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44698935120)
 
 ## B+C 结构、量能和参考计划
 
@@ -60,6 +60,13 @@
   详见 [公式与冻结验证](BC_REFERENCE_RESEARCH.md)。
 - #7 展示 C 的两项参考止损距离。11-18 冻结样本中，CHH、GME、H 的两项距离均超过 9%。
   警示用于研究展示，C 的既有匹配和参考价位规则继续适用。见 [#7](https://github.com/EFSing/us_watchlist/pull/7)。
+
+## IWB 研究模拟持仓（Draft）
+
+- 离线入口从原 IWB 归档生成按 B、C 均衡、C 保守分组的模拟计划，支持开盘检查、每日估值、止损、可选 R 保护和归属清晰的 R 统计。
+  每日证据以连续 XNYS 会话串联，独立报告显示缺证及最近可信价格。
+- 冻结复算保留 `HISTORICAL_REPLAY` 标识。11-18 的 33 条有效价位在次日检查中有 19 条开盘未触发，14 条研究入场资格待定，
+  另有 4 条 11-19 新计划待检查。前瞻模式等待入场、退出和长期归档决策。[口径、台账与验收](IWB_PAPER.md)
 
 ## 后续需决定
 

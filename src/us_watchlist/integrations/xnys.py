@@ -44,6 +44,17 @@ def is_session(day: date) -> bool:
     return bool(_calendar().is_session(day.isoformat()))
 
 
+def next_session(day: date) -> date:
+    return _calendar().next_session(day.isoformat()).date()
+
+
+def sessions_between(first: date, last: date) -> tuple[date, ...]:
+    calendar = _calendar()
+    if not calendar.is_session(first.isoformat()) or not calendar.is_session(last.isoformat()) or first > last:
+        raise ValueError("PAPER_REQUIRES_ORDERED_XNYS_SESSIONS")
+    return tuple(label.date() for label in calendar.sessions_in_range(first.isoformat(), last.isoformat()))
+
+
 def new_york_date(now: datetime) -> date:
     require_utc(now)
     return now.astimezone(ZoneInfo(NEW_YORK)).date()

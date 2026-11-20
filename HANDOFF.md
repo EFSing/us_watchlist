@@ -16,6 +16,22 @@
 | [#8](https://github.com/EFSing/us_watchlist/pull/8) | `5875fb9b671e634382aa718555d0eeaffc519cad` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44483134656) |
 | [#7](https://github.com/EFSing/us_watchlist/pull/7) | `daca05278c0082ce00518c145a244a029d84ee90` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44483393328) |
 | [#9](https://github.com/EFSing/us_watchlist/pull/9) | [PR 合并记录](https://github.com/EFSing/us_watchlist/pull/9) | [按合并 SHA 核对 main push CI](https://github.com/EFSing/us_watchlist/actions/workflows/ci.yml?branch=main) |
+| [#10](https://github.com/EFSing/us_watchlist/pull/10) | `a5a470f918247b57133870a160d1f5a5eb9846cd` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44695960917) |
+| [#11](https://github.com/EFSing/us_watchlist/pull/11) | `2381431379ac477e25e958ad826453f34b1d5a71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44698052180) |
+
+## 2026-11-20 接手与模拟研究审阅
+
+`PROJECT_GOVERNANCE_STATE_CONFLICT` 已核对。接手时本地 `main` 和恢复表停在 #9，
+远端已合并至 #11。以合并 SHA 和对应 push CI 更新本地分支及上表。仓库定时变量读取为 `true`。
+2026-11-19 的 [运行 44698935120](https://github.com/EFSing/us_watchlist/actions/runs/44698935120)
+是 `workflow_dispatch`，日报归档和邮件步骤成功，继续单独核对首次自然定时运行。
+
+研究模拟持仓由 `codex/iwb-research-paper-tracking` 审阅。离线账本、伴随报告、两日冻结复算和规则待决项见
+[研究模拟持仓](docs/IWB_PAPER.md)。11-19 冻结归档在
+`.runtime/data/iwb-validation/2026-11-19-hosted-44698935120/daily/`。
+生产启用的阻碍是 B/C 专属模拟政策、前瞻证据的可用时间和长期账本恢复约定。
+
+## 历史验收与调度
 
 `PROJECT_GOVERNANCE_STATE_CONFLICT` 已通过 #8 处理。合并前 `main` 的恢复文档仍将 #1～#6 列为
 Draft，GitHub 确认它们已合并且对应 CI 成功。旧审阅状态保留在下方快照。
