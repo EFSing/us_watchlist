@@ -59,6 +59,18 @@ class MailTests(unittest.TestCase):
         subject, _, _ = render_email_summary({**RUN, "status": "SUCCESS"})
         self.assertIn("｜完成", subject)
 
+    def test_legacy_published_report_without_history_coverage_is_emailed(self):
+        legacy = {key: value for key, value in RUN.items() if key != "full_history_symbols"}
+        html = b"<!doctype html><html><body>Original archived report</body></html>"
+        directory = Path("/fake/legacy-archive")
+        with (patch("us_watchlist.app.iwb_notifications.verify_completed", return_value=legacy),
+              patch("us_watchlist.app.iwb_notifications.read_artifact", return_value=html),
+              patch("us_watchlist.app.iwb_notifications.send_mail") as deliver):
+            send_iwb_email(directory, TARGET)
+        self.assertIn("旧版归档未记录", deliver.call_args.args[1])
+        self.assertIn("旧版归档未记录", deliver.call_args.args[2])
+        self.assertEqual(deliver.call_args.args[3], html)
+
     def test_smtp_uses_existing_gmail_to_qq_secrets_with_starttls(self):
         with patch("us_watchlist.integrations.smtp_mail.smtplib.SMTP") as smtp:
             smtp.return_value.__enter__.return_value.send_message.return_value = {}
