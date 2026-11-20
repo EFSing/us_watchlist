@@ -3,7 +3,7 @@
 from decimal import Decimal
 from html import escape
 
-from us_watchlist.domain.paper import STRATEGIES, Mode, Status
+from us_watchlist.domain.paper import POSITION_PROTOCOL, STRATEGIES, Mode, Status
 
 _LABELS = {
     **STRATEGIES, Status.PENDING: "待开盘检查", Status.NOT_FILLED: "未成交",
@@ -29,6 +29,13 @@ _LABELS = {
     "REFERENCE_LEVELS_UNAVAILABLE": "参考计划缺失", "STRUCTURE_NOT_AVAILABLE": "结构观察不可用",
     "SIGNAL_PRICE_BASIS_UNAVAILABLE": "信号日价格基准缺失",
     "W2_TO_W3_TRANSITION_PROXY": "2→3 价格结构代理", "C_CLOSE_REBOUND_CONFIRMED": "C 收盘反弹形态",
+    "POSITION_STRUCTURE_UNAVAILABLE": "缺少有效的持仓结构锚点",
+    "OPEN_AT_OR_BELOW_STRUCTURE": "开盘达到或跌破结构失效线",
+    "ACTIVE_STOP_TOUCHED": "盘中触及生效止损",
+    "STRUCTURE_EXIT_ARMED": "收盘确认结构破坏，等待下一交易日开盘退出",
+    "STRUCTURE_NEXT_OPEN": "结构破坏后开盘退出",
+    "LATE_CLOSE_EVIDENCE": "收盘证据在下一交易日开盘时尚未可用，持仓停更",
+    "INITIAL_STOP": "初始执行止损", "STRUCTURE_STOP": "结构移动止损", "PROFIT_STOP": "R 利润保护",
 }
 
 _STYLES = """
@@ -85,14 +92,22 @@ def _qualification(plan: dict) -> str:
     return f"{_label(plan['qualification'])} · {_label(plan['risk_warning'])}"
 
 
+def _history_mark(state: dict) -> str:
+    mark = f' · {_fmt(state["latest_price"])} USD · {_fmt(state["r"], "R")}'
+    if "active_stop_at_open" not in state:
+        return f'{mark} · 止损 {_fmt(state["stop"])} USD'
+    mark += f' · 当日生效止损 {_fmt(state["active_stop_at_open"])} USD'
+    if state["next_stop_session"] and Decimal(state["stop"]) > Decimal(state["active_stop_at_open"]):
+        mark += f' · 次日止损 {_fmt(state["stop"])} USD'
+    return mark
+
+
 def _history(row: dict) -> str:
     events = "".join(
         f"<li>{escape(event['trade_date'])} · {_label(event['reason'])}"
         + (f" · 开盘 {_fmt(event['opening'])} USD · 实际 RR {_fmt(event.get('actual_rr'))}"
            if 'opening' in event else "")
-        + (f" · {_fmt(event['position']['latest_price'])} USD · {_fmt(event['position']['r'], 'R')}"
-           f" · 止损 {_fmt(event['position']['stop'])} USD"
-           if 'position' in event else "")
+        + (_history_mark(event["position"]) if "position" in event else "")
         + (f" · {escape(event['diagnostic'])}" if event.get("diagnostic") else "")
         + "</li>"
         for event in row["history"]
@@ -104,10 +119,27 @@ def _position(row: dict) -> str:
     plan, state = row["plan"], row["position"]
     warning = (f'<p class="notice">状态未更新 · {_label(row["history"][-1]["reason"])}</p>'
                if row.get("suspended_at") else "")
+    stop_facts = (("当前止损", _fmt(state["stop"], " USD")),)
+    if plan.get("protocol") == POSITION_PROTOCOL:
+        stop_facts = (
+            ("初始执行止损", _fmt(state["initial_stop"], " USD")),
+            ("结构底线", _fmt(state["structural_floor"], " USD")),
+            ("最近估值日生效止损", _fmt(state["active_stop_at_open"], " USD")),
+            ("下一会话止损", _fmt(state["stop"], " USD") + " · " + escape(state["next_stop_session"])
+             if state["next_stop_session"] else "—"),
+            ("逐笔最大峰值回吐", _fmt(state["max_mfe_drawdown_r"], "R")),
+        )
+        protection = state.get("pending_exit")
+        if protection is not None:
+            why = " · ".join(_label(reason) for reason in protection["reasons"])
+            warning += f'<p class="notice">预约开盘退出 · {escape(protection["session"])} · {why}</p>'
+        low = state.get("protected_low")
+        if low is not None:
+            stop_facts += (("最近确认结构低点", _fmt(low["price"], " USD") + " · " + escape(low["confirmed_on"])),)
     facts = _facts((
         ("模拟入场日", escape(state["entry_date"])), ("实际入场 RR", _fmt(state["initial_rr"])),
         ("入场价", _fmt(state["entry"], " USD")), ("最新价", _fmt(state["latest_price"], " USD")),
-        ("当前止损", _fmt(state["stop"], " USD")), ("参考目标", _fmt(plan["levels"]["target"], " USD")),
+        *stop_facts, ("参考目标", _fmt(plan["levels"]["target"], " USD")),
         ("浮动盈亏 / 单位", _fmt(state["pnl_per_unit"], " USD") + " · " + _percent(state["return"])),
         ("浮动 R", _fmt(state["r"], "R")), ("MFE / MAE", f'{_fmt(state["mfe_r"], "R")} / {_fmt(state["mae_r"], "R")}'),
         ("最近有效估值", escape(state["priced_on"])), ("当前结构观察", _label(state["structure"])),
@@ -135,6 +167,10 @@ def _activity(row: dict, event: dict) -> str:
         position = event["position"]
         reason += (f' · {_fmt(position["exit_price"], " USD")} · '
                    f'{_percent(position["return"])} · {_fmt(position["r"], "R")}')
+        if "exit_reasons" in position:
+            reason += "".join(f" · {_label(item)}" for item in position["exit_reasons"][1:])
+            if event["reason"] in ("ACTIVE_STOP_TOUCHED", "GAP_THROUGH_STOP"):
+                reason += " · " + " / ".join(_label(item) for item in position["active_stop_sources"])
     state = event.get("observation", event["status"])
     return (f'<article class="activity"><div><strong>{_name(plan)}</strong><p class="small">'
             f'{reason} · {_qualification(plan)}</p></div><span class="status">{_label(state)}</span>'
@@ -161,10 +197,16 @@ def paper_mail_text(view: dict) -> str:
     filled = sum(event["reason"] == "FILLED_AT_T1_OPEN" for _, event in activity)
     missed = sum(event["status"] == Status.NOT_FILLED for _, event in activity)
     exited = sum(event["status"] == Status.CLOSED for _, event in activity)
+    pending_exits = ""
+    if view["study"]["protocol"] == POSITION_PROTOCOL:
+        exits = [row["position"]["pending_exit"] for row in positions if row["position"]["pending_exit"]]
+        structure = sum(exit["reasons"][0] == "STRUCTURE_NEXT_OPEN" for exit in exits)
+        pending_exits = f"待开盘退出 {len(exits)} 笔（结构 {structure} · 利润保护 {len(exits) - structure}）\n"
     return (
         f'研究模拟持仓 · {view["trade_date"]} · {mode}{note}\n'
         f"当前模拟持仓 {len(positions)} 只（按策略与信号计） · 状态未更新 {stale} 笔 · 待检查 {len(pending)} 笔\n"
         f"当日成交 {filled} 笔 · 未成交 {missed} 笔 · 退出 {exited} 笔 · 无法确认 {gaps} 笔\n"
+        f"{pending_exits}"
         f"累计已结束 {closed} 笔。资格、价格与状态来源见独立研究报告。\n"
     )
 

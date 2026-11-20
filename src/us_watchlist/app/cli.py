@@ -13,6 +13,7 @@ from us_watchlist.app.iwb_daily import DEFAULT_POOL, PUBLISHABLE, observe_iwb, u
 from us_watchlist.app.iwb_notifications import send_iwb_email
 from us_watchlist.app.iwb_paper import replay_iwb
 from us_watchlist.app.smoke import run_smoke
+from us_watchlist.domain.paper import POSITION_PROTOCOL, PROTOCOL
 from us_watchlist.integrations.github_artifacts import GitHubArtifacts, write_workflow_outputs
 from us_watchlist.integrations.replay_input import yahoo_capture_request
 from us_watchlist.integrations.yahoo_chart import capture_yahoo
@@ -57,6 +58,7 @@ def main() -> int:
     paper.add_argument("--directory", type=Path, help="Verified IWB archive, omit to restore existing ledger")
     paper.add_argument("--initialize", action="store_true", help="Explicitly create the first session")
     paper.add_argument("--policy", type=Path, help="Explicit offline research parameters, omit for evidence only")
+    paper.add_argument("--protocol", choices=(PROTOCOL, POSITION_PROTOCOL), default=PROTOCOL)
     paper.add_argument("--expect-previous", help="Expected prior ledger SHA-256 from an independent receipt")
     args = parser.parse_args()
 
@@ -94,7 +96,7 @@ def main() -> int:
         elif args.command == "iwb-paper":
             output, digest = replay_iwb(
                 args.ledger_root, args.start_date, args.trade_date, directory=args.directory, policy_path=args.policy,
-                initialize=args.initialize, expect_previous=args.expect_previous,
+                initialize=args.initialize, expect_previous=args.expect_previous, protocol=args.protocol,
             )
             print(f"{output}\nPAPER_LEDGER_SHA256 {digest}")
         else:

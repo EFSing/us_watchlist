@@ -31,6 +31,10 @@
 `.runtime/data/iwb-validation/2026-11-19-hosted-44698935120/daily/`。
 生产启用的阻碍是 B/C 专属模拟政策、前瞻证据的可用时间和长期账本恢复约定。
 
+同一 Draft [#12](https://github.com/EFSing/us_watchlist/pull/12) 审阅 V2 共用退出协议。
+用 `iwb-paper --protocol us_iwb_paper_position_v2` 建立独立离线链。V1 继续复原原研究，
+原日报按既有 SHA 核验。先审阅各组资格及退出参数，再扩大样本进行历史对照。
+
 ## 历史验收与调度
 
 `PROJECT_GOVERNANCE_STATE_CONFLICT` 已通过 #8 处理。合并前 `main` 的恢复文档仍将 #1～#6 列为

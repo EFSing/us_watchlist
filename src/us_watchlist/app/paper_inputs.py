@@ -5,12 +5,12 @@ from decimal import Decimal
 from pathlib import Path
 
 from us_watchlist.app.iwb_daily import verify_completed
-from us_watchlist.domain.paper import BASIS, B_VERSION, STRATEGIES
-from us_watchlist.domain.replay_research import VOLUME_FIELDS
+from us_watchlist.domain.paper import BASIS, B_VERSION, STRATEGIES, cohort, seed_sessions
+from us_watchlist.domain.replay_research import UNCONFIRMED, VOLUME_FIELDS
 from us_watchlist.integrations.iwb_holdings import read_holdings
 from us_watchlist.integrations.local_artifacts import read_artifact
 from us_watchlist.integrations.paper_archive import quote_prices, read_report_records
-from us_watchlist.integrations.xnys import next_session
+from us_watchlist.integrations.xnys import next_session, regular_windows
 from us_watchlist.integrations.yahoo_chart import read_yahoo
 from us_watchlist.market_data.quality import regular_history
 from us_watchlist.universe.eligibility import eligible_symbols
@@ -44,7 +44,40 @@ def _candidate(row: dict) -> dict:
     }
 
 
-def _screening(run: dict, records: dict, listed: tuple[str, ...]) -> tuple[list[dict], dict]:
+def _structure_origin(row: dict, evaluation: dict, signal_date: str) -> dict | None:
+    structure = row["structure"]
+    if structure["stage"] == UNCONFIRMED:
+        return None
+    archived_points = structure.get("points", ())
+    points = {name: [day, str(price)] for name, day, price in archived_points}
+    if len(points) != len(archived_points):
+        raise ValueError("PAPER_DUPLICATE_STRUCTURE_ANCHOR")
+    if row["strategy_version"] == B_VERSION:
+        ordered = ("L0", "H1", "L2")
+        floor = "L2"
+    else:
+        ordered = ("C_PRIOR_HIGH", "C_SUPPORT_FLOOR", "C_SECOND_LOW", "C_REBOUND_HIGH")
+        floor = "C_SUPPORT_FLOOR"
+        metrics = evaluation["structure"]
+        if "Second low date" in metrics and "Support ceiling" in metrics:
+            points["C_SECOND_LOW"] = [metrics["Second low date"], str(metrics["Support ceiling"])]
+    if any(name not in points for name in ordered):
+        return None
+    dates = [date.fromisoformat(points[name][0]) for name in ordered]
+    prices = [Decimal(points[name][1]) for name in ordered]
+    if (dates != sorted(set(dates)) or dates[-1] >= date.fromisoformat(signal_date)
+            or any(not price.is_finite() or price <= 0 for price in prices)):
+        raise ValueError("PAPER_INVALID_STRUCTURE_ORIGIN")
+    if row["strategy_version"] == B_VERSION:
+        valid = prices[0] < prices[2] < prices[1]
+    else:
+        valid = prices[1] < prices[2] < prices[3]
+    if not valid:
+        raise ValueError("PAPER_INVALID_STRUCTURE_ORIGIN")
+    return {"floor_anchor": floor, "points": points, "known_on": signal_date}
+
+
+def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positions=False) -> tuple[list[dict], dict]:
     research = records["record-research"]
     identity = (run["trade_date"], run["observed_at"], run["input_sha256"], "iwb_yahoo_observation")
     keys = ("trade_date", "cutoff", "manifest_sha256", "mode")
@@ -70,10 +103,47 @@ def _screening(run: dict, records: dict, listed: tuple[str, ...]) -> tuple[list[
         raise ValueError("PAPER_RESEARCH_MATCH_SET_MISMATCH")
     for (version, symbol), row in candidates.items():
         grid[version][symbol] = row["structure"]["stage"]
-    return [_candidate(row) for _, row in sorted(candidates.items())], grid
+    evaluations = {
+        (version, evaluation["symbol"]): evaluation
+        for version in STRATEGIES for evaluation in records[version]["evaluations"] if evaluation["matched"]
+    } if with_positions else {}
+    output = []
+    for key, row in sorted(candidates.items()):
+        plan = _candidate(row)
+        if with_positions:
+            evaluation = evaluations[key]
+            plan["structure_origin"] = _structure_origin(row, evaluation, run["trade_date"])
+            if plan["strategy_version"] == B_VERSION:
+                metrics = evaluation["structure"]
+                plan["breakout_date"] = metrics.get("Breakout date")
+                plan["platform"] = metrics.get("Platform")
+                plan["reference_stop_support"] = dict(row["trade"]["inputs"]).get("support")
+        output.append(plan)
+    return output, grid
 
 
-def load_day(directory: Path, target: date, tracking_symbols: set[str]) -> dict:
+def _seed_prices(history, candidates: list[dict], policy: dict) -> dict:
+    counts = {}
+    for plan in candidates:
+        rule = policy.get(plan["strategy_version"], {}).get(cohort(plan))
+        if rule and plan["levels"]:
+            symbol = plan["symbol"]
+            counts[symbol] = max(counts.get(symbol, 0), seed_sessions(rule["exit_model"]))
+    seeds = {symbol: [] for symbol, count in counts.items() if count}
+    remaining = set(seeds)
+    for snapshot in reversed(history):
+        if not remaining:
+            break
+        prices = quote_prices(snapshot)
+        for symbol in tuple(remaining):
+            if symbol in prices:
+                seeds[symbol].append([str(snapshot.session.trading_date), prices[symbol]])
+            if symbol not in prices or len(seeds[symbol]) == counts[symbol]:
+                remaining.remove(symbol)
+    return {symbol: list(reversed(bars)) for symbol, bars in sorted(seeds.items())}
+
+
+def load_day(directory: Path, target: date, tracking_symbols: set[str], *, position_policy: dict | None = None) -> dict:
     run = verify_completed(directory, target)
     records = read_report_records(read_artifact(directory / "report.html"), run["report_sha256"])
     pool = read_holdings(directory / "holdings.zip").snapshot
@@ -93,7 +163,7 @@ def load_day(directory: Path, target: date, tracking_symbols: set[str]) -> dict:
         run["listed_equities"], run["target_bars"], run["missing_target_bars"],
     ):
         raise ValueError("PAPER_TARGET_COVERAGE_MISMATCH")
-    candidates, grid = _screening(run, records, symbols)
+    candidates, grid = _screening(run, records, symbols, with_positions=position_policy is not None)
 
     previous, current = map(quote_prices, history[-2:])
     gaps = dict(diagnostics)
@@ -105,7 +175,7 @@ def load_day(directory: Path, target: date, tracking_symbols: set[str]) -> dict:
     )}
     source.update(price_basis=BASIS, research_version=records["record-research"]["version"],
                   reference_commit=records["record-research"]["reference_commit"])
-    return {
+    day = {
         "trade_date": target.isoformat(), "opens_at": history[-1].session.opens_at.isoformat(),
         "next_session": next_session(target).isoformat(), "source": source, "candidates": candidates,
         "quotes": {
@@ -117,3 +187,11 @@ def load_day(directory: Path, target: date, tracking_symbols: set[str]) -> dict:
             for symbol in sorted(requested)
         },
     }
+    if position_policy is not None:
+        following = regular_windows(date.fromisoformat(day["next_session"]), 1)[0]
+        day.update(
+            closes_at=history[-1].session.closes_at.isoformat(),
+            next_opens_at=following.opens_at.isoformat(),
+            seeds=_seed_prices(history, candidates, position_policy),
+        )
+    return day

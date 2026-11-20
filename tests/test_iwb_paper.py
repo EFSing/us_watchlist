@@ -2,18 +2,20 @@ import json
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
-from datetime import date
+from datetime import date, timedelta
+from decimal import Decimal
 from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from us_watchlist.app.iwb_paper import run_study
-from us_watchlist.app.paper_inputs import _screening, load_day
-from us_watchlist.domain.paper import BASIS, B_VERSION, STRATEGIES, Mode, Status, check_policy
+from us_watchlist.app.paper_inputs import _screening, _structure_origin, load_day
+from us_watchlist.domain.paper import BASIS, B_VERSION, POSITION_PROTOCOL, STRATEGIES, Mode, Status, check_policy
 from us_watchlist.domain.replay_research import VOLUME_FIELDS
 from us_watchlist.integrations.paper_archive import read_report_records
-from us_watchlist.integrations.xnys import next_session
+from us_watchlist.integrations.xnys import next_session, regular_windows
+from us_watchlist.tracking.paper_position import PositionIndicators
 
 START = date(2026, 1, 5)
 T1 = date(2026, 1, 6)
@@ -98,6 +100,30 @@ def run_day(root, day, *, policy=POLICY, **options):
     )
 
 
+def position_policy(**model):
+    return {
+        B_VERSION: {"B_NUMERIC_QUALIFIED:UNKNOWN": {
+            **RULE, "exit_model": {
+                "reject_open_at_or_below_structure": False, "structure_exit": False, "pivot": None,
+                "atr_trail": None, "profit_protection": None, **model,
+            },
+        }},
+    }
+
+
+def position_day(day, *, bar=SIGNAL_BAR, previous=SIGNAL_BAR, signal=False):
+    plan = candidate("ALFA")
+    plan["structure_origin"] = {
+        "floor_anchor": "L2", "points": {"L2": ["2026-01-02", "97"]}, "known_on": str(START),
+    }
+    data = evidence(day, (plan,) if signal else (), bars={"ALFA": bar}, prior={"ALFA": previous})
+    current, following = regular_windows(next_session(day), 2)
+    data.update(opens_at=current.opens_at.isoformat(), closes_at=current.closes_at.isoformat(),
+                next_opens_at=following.opens_at.isoformat(), seeds={})
+    data["source"].update(price_basis=BASIS, observed_at=(current.closes_at + timedelta(hours=1)).isoformat())
+    return data
+
+
 class PaperTests(unittest.TestCase):
     def setUp(self):
         root = Path(".runtime/tmp")
@@ -109,6 +135,188 @@ class PaperTests(unittest.TestCase):
     @staticmethod
     def by_symbol(view):
         return {row["plan"]["symbol"]: row for row in view["records"].values()}
+
+    def position_session(self, day, policy, **options):
+        return run_day(self.root, day, policy=policy, protocol=POSITION_PROTOCOL, **options)
+
+    def test_structure_trail_uses_confirmation_close_atr_and_restarts_with_scheduled_stop(self):
+        policy = position_policy(
+            structure_exit=True, pivot={"radius": 1, "min_separation": 2, "require_rebound": False},
+            atr_trail={"period": 1, "multiple": "0.5"},
+        )
+        signal = position_day(START, signal=True)
+        signal["seeds"] = {"ALFA": [[str(START), signal["quotes"]["ALFA"]["current"]]]}
+        self.position_session(signal, policy, initialize=True)
+        previous = SIGNAL_BAR
+        for day, bar in (
+            (T1, ("100", "112", "100", "106")), (T2, ("106", "107", "103", "105")),
+            (T3, ("105", "106", "101", "104")),
+        ):
+            _, view = self.position_session(position_day(day, bar=bar, previous=previous), policy)
+            state = self.by_symbol(view)["ALFA"]["position"]
+            self.assertIsNone(state.get("protected_low"))
+            self.assertEqual(state["stop"], "95")
+            previous = bar
+
+        day = next_session(T3)
+        bar = ("104", "106", "102", "105")
+        output, view = self.position_session(position_day(day, bar=bar, previous=previous), policy)
+        state = self.by_symbol(view)["ALFA"]["position"]
+        self.assertEqual((state["structural_floor"], state["structure_atr"], state["active_stop_at_open"], state["stop"]),
+                         ("101", "4", "95", "99.0"))
+        self.assertEqual(state["protected_low"]["pivot_date"], str(T3))
+        self.assertEqual(state["protected_low"]["confirmed_on"], str(day))
+        priced = (output / "paper-report.html").read_bytes()
+        (output / "paper-report.html").unlink()
+        restored = run_study(self.root, Mode.SYNTHETIC, START, day, policy, protocol=POSITION_PROTOCOL)[1]
+        self.assertEqual(restored, view)
+        self.assertEqual((output / "paper-report.html").read_bytes(), priced)
+
+        following = next_session(day)
+        wider_bar = ("105", "111", "100", "106")
+        _, view = self.position_session(position_day(following, bar=wider_bar, previous=bar), policy)
+        state = self.by_symbol(view)["ALFA"]["position"]
+        self.assertEqual((state["structure_atr"], state["structure_stop_candidate"], state["stop"]),
+                         ("11", "95.5", "99.0"))
+        _, stopped = self.position_session(
+            position_day(next_session(following), bar=("106", "125", "99", "110"), previous=wider_bar), policy,
+        )
+        position = self.by_symbol(stopped)["ALFA"]["position"]
+        self.assertEqual((position["exit_reason"], position["exit_price"], position["active_stop_sources"]),
+                         ("ACTIVE_STOP_TOUCHED", "99.0", ["STRUCTURE_STOP"]))
+        self.assertEqual((position["mfe_r"], position["target_seen"]), ("2.4", False))
+
+    def test_structure_has_priority_over_profit_and_new_gap_at_the_open(self):
+        policy = position_policy(structure_exit=True, profit_protection={"trigger_r": "2", "giveback_r": "1"})
+        self.position_session(position_day(START, signal=True), policy, initialize=True)
+        broken = ("100", "110", "96", "96")
+        output, pending = self.position_session(position_day(T1, bar=broken), policy)
+        position = self.by_symbol(pending)["ALFA"]["position"]
+        reasons = ["STRUCTURE_NEXT_OPEN", "PROFIT_PROTECTION_NEXT_OPEN"]
+        self.assertEqual(position["pending_exit"]["reasons"], reasons)
+        self.assertEqual((position["pending_exit"]["session"], position["stop"]), (str(T2), "95"))
+        self.assertIn("待开盘退出 1 笔", (output / "paper-email.txt").read_text(encoding="utf-8"))
+        restored = run_study(self.root, Mode.SYNTHETIC, START, T1, policy, protocol=POSITION_PROTOCOL)[1]
+        self.assertEqual(restored, pending)
+
+        gap = position_day(T2, bar=("93", "126", "92", "120"), previous=broken)
+        gap["quotes"]["ALFA"]["structures"][B_VERSION] = "POST_EXIT_STRUCTURE"
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: self.position_session(gap, policy)[1], range(2)))
+        self.assertEqual(results[0], results[1])
+        closed = self.by_symbol(results[0])["ALFA"]["position"]
+        self.assertEqual((closed["exit_reason"], closed["exit_reasons"], closed["exit_price"]),
+                         ("STRUCTURE_NEXT_OPEN", [*reasons, "GAP_THROUGH_STOP"], "93"))
+        self.assertEqual((closed["mfe_r"], closed["max_mfe_drawdown_r"], closed["target_seen"]), ("2", "3.4", False))
+        self.assertNotEqual(closed["structure"], "POST_EXIT_STRUCTURE")
+
+    def test_position_protocol_keeps_fixed_gap_equality_and_stop_day_high_unknown(self):
+        policy = position_policy()
+        alive = ("100", "106", "96", "101")
+        options = {"policy": policy, "protocol": POSITION_PROTOCOL}
+        for opening, low, price, reason, result in (
+            ("94", "93", "94", "GAP_THROUGH_STOP", "-1.2"),
+            ("95", "92", "95", "GAP_THROUGH_STOP", "-1"),
+            ("101", "95", "95", "ACTIVE_STOP_TOUCHED", "-1"),
+        ):
+            with self.subTest(opening=opening):
+                root = self.root / opening
+                run_day(root, position_day(START, signal=True), initialize=True, **options)
+                run_day(root, position_day(T1, bar=alive), **options)
+                day = position_day(T2, bar=(opening, "125", low, "110"), previous=alive)
+                output, view = run_day(root, day, **options)
+                position = self.by_symbol(view)["ALFA"]["position"]
+                self.assertEqual((position["exit_price"], position["exit_reason"], position["r"]), (price, reason, result))
+                self.assertEqual((position["mfe_r"], position["target_seen"]), ("1.2", False))
+                receipt = (output / "day.json").read_bytes()
+                day["quotes"]["ALFA"]["current"][1] = "126"
+                with self.assertRaisesRegex(ValueError, "identity already used"):
+                    run_day(root, day, **options)
+                self.assertEqual((output / "day.json").read_bytes(), receipt)
+
+    def test_exact_profit_boundary_then_pending_open_does_not_add_target(self):
+        policy = position_policy(profit_protection={"trigger_r": "2", "giveback_r": "1"})
+        self.position_session(position_day(START, signal=True), policy, initialize=True)
+        first = ("100", "110", "96", "105")
+        _, view = self.position_session(position_day(T1, bar=first), policy)
+        position = self.by_symbol(view)["ALFA"]["position"]
+        self.assertEqual((position["active_stop_at_open"], position["stop"], position["initial_stop"]),
+                         ("95", "105", "95"))
+        second = ("109", "115", "106", "109")
+        _, view = self.position_session(position_day(T2, bar=second, previous=first), policy)
+        position = self.by_symbol(view)["ALFA"]["position"]
+        self.assertEqual((position["protection_floor"], position["pending_exit"]["reasons"]),
+                         ("110", ["PROFIT_PROTECTION_NEXT_OPEN"]))
+        _, view = self.position_session(position_day(T3, bar=("120", "125", "90", "100"), previous=second), policy)
+        position = self.by_symbol(view)["ALFA"]["position"]
+        self.assertEqual((position["exit_price"], position["r"], position["mfe_r"], position["target_seen"]),
+                         ("120", "4", "4", False))
+
+    def test_structure_touch_holds_and_missing_appointment_session_suspends(self):
+        policy = position_policy(structure_exit=True)
+        self.position_session(position_day(START, signal=True), policy, initialize=True)
+        touch = ("100", "103", "96", "97")
+        _, view = self.position_session(position_day(T1, bar=touch), policy)
+        self.assertIsNone(self.by_symbol(view)["ALFA"]["position"]["pending_exit"])
+        broken = ("98", "100", "96", "96")
+        self.position_session(position_day(T2, bar=broken, previous=touch), policy)
+        _, missing = self.position_session(position_day(T3, bar=None, previous=broken), policy)
+        following = next_session(T3)
+        _, view = self.position_session(position_day(following, bar=("94", "100", "92", "98"), previous=broken), policy)
+        missing_row = self.by_symbol(missing)["ALFA"]
+        later = self.by_symbol(view)["ALFA"]
+        self.assertEqual(later["position"], missing_row["position"])
+        self.assertEqual(later["position"]["pending_exit"]["session"], str(T3))
+        self.assertEqual(later["position"]["priced_on"], str(T2))
+        self.assertEqual(later["history"][-1]["reason"], "UNRESOLVED_PRIOR_GAP")
+
+    def test_position_protocol_rejects_late_management_and_bad_session_evidence(self):
+        policy = position_policy(structure_exit=True)
+        self.position_session(position_day(START, signal=True), policy, initialize=True)
+        day = position_day(T1, bar=("100", "110", "96", "96"))
+        too_early = deepcopy(day)
+        too_early["source"]["observed_at"] = too_early["opens_at"]
+        with self.assertRaisesRegex(ValueError, "PAPER_POSITION_EVIDENCE_MISMATCH"):
+            self.position_session(too_early, policy)
+        wrong_session = {**day, "next_session": str(T3)}
+        with self.assertRaisesRegex(ValueError, "PAPER_POSITION_SESSION_MISMATCH"):
+            self.position_session(wrong_session, policy)
+        day["source"]["observed_at"] = day["next_opens_at"]
+        _, view = self.position_session(day, policy)
+        row = self.by_symbol(view)["ALFA"]
+        self.assertEqual((row["history"][-1]["reason"], row["suspended_at"]), ("LATE_CLOSE_EVIDENCE", str(T1)))
+        self.assertIsNone(row["position"]["pending_exit"])
+
+    def test_rebound_requires_its_right_window_and_atr_warms_up_from_contiguous_seed(self):
+        indicators = PositionIndicators(
+            {"pivot": {"radius": 1, "min_separation": 2, "require_rebound": True},
+             "atr_trail": {"period": 3}}, [], str(T1),
+        )
+        for day, bar in (
+            (T1, ("102", "105", "101", "103")), (T2, ("103", "104", "100", "102")),
+            (T3, ("102", "108", "102", "106")),
+        ):
+            self.assertIsNone(indicators.observe(str(day), tuple(map(Decimal, bar)), Decimal(97)))
+            self.assertIsNone(indicators.atr)
+        day = next_session(T3)
+        low = indicators.observe(str(day), tuple(map(Decimal, ("106", "107", "103", "104"))), Decimal(97))
+        self.assertEqual(low, {"pivot_date": str(T2), "confirmed_on": str(day), "price": "100", "rebound_date": str(T3)})
+        self.assertEqual(indicators.atr, Decimal(14) / 3)
+
+    def test_structure_origin_uses_each_rules_frozen_lows(self):
+        b = {"strategy_version": B_VERSION, "structure": {"stage": "EARLY_PULLBACK", "points": [
+            ["L0", "2025-12-29", "90"], ["H1", "2025-12-30", "110"], ["L2", "2026-01-02", "97"],
+        ]}}
+        self.assertEqual(_structure_origin(b, {}, str(START))["floor_anchor"], "L2")
+        for version in (BALANCED, CONSERVATIVE):
+            c = {"strategy_version": version, "structure": {"stage": "C_CLOSE_REBOUND_CONFIRMED", "points": [
+                ["C_PRIOR_HIGH", "2025-12-29", "110"], ["C_SUPPORT_FLOOR", "2025-12-30", "93"],
+                ["C_REBOUND_HIGH", "2026-01-02", "101"],
+            ]}}
+            evaluation = {"structure": {"Second low date": "2025-12-31", "Support ceiling": 97}}
+            origin = _structure_origin(c, evaluation, str(START))
+            self.assertEqual(origin["floor_anchor"], "C_SUPPORT_FLOOR")
+            self.assertEqual(origin["points"]["C_SECOND_LOW"], ["2025-12-31", "97"])
 
     def test_full_lifecycle_and_all_open_checks(self):
         first, second, third, fourth = demo_days()

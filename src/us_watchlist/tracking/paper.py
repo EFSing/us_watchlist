@@ -5,7 +5,8 @@ from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
 
-from us_watchlist.domain.paper import B_VERSION, PROTOCOL, STRATEGIES, Status, cohort
+from us_watchlist.domain.paper import B_VERSION, POSITION_PROTOCOL, PROTOCOL, STRATEGIES, Status, cohort, needs_structure
+from us_watchlist.tracking.paper_position import PositionIndicators, close_position
 
 # From the reference Paper Tracking position replay. Prices from today's
 # range can change tomorrow's stop, or schedule an exit for tomorrow's open.
@@ -21,7 +22,7 @@ def _event(row: dict, day: dict, status: Status, reason: str, **details) -> None
     row["status"] = status
     row["history"].append({
         "trade_date": day["trade_date"], "observed_at": day["source"]["observed_at"],
-        "input_sha256": day["source"]["input_sha256"], "protocol": PROTOCOL,
+        "input_sha256": day["source"]["input_sha256"], "protocol": row["plan"].get("protocol", PROTOCOL),
         "status": status, "reason": reason, **details,
     })
 
@@ -46,6 +47,14 @@ def _open_check(plan: dict, opening: Decimal, policy: dict) -> tuple[Status, str
     rule = policy.get(plan["strategy_version"], {}).get(cohort(plan))
     if rule is None:
         return Status.NOT_FILLED, "COHORT_NOT_ENABLED", facts
+    model = rule["exit_model"]
+    if plan.get("protocol") == POSITION_PROTOCOL and needs_structure(model):
+        origin = plan["structure_origin"]
+        if origin is None:
+            return Status.UNAVAILABLE, "POSITION_STRUCTURE_UNAVAILABLE", facts
+        floor = Decimal(origin["points"][origin["floor_anchor"]][1])
+        if model["reject_open_at_or_below_structure"] and opening <= floor:
+            return Status.NOT_FILLED, "OPEN_AT_OR_BELOW_STRUCTURE", facts
     for key, actual, compare, reason in (
         ("max_open_premium", premium, Decimal.__gt__, "OPEN_ABOVE_CONFIGURED_PREMIUM"),
         ("min_target_upside", upside, Decimal.__lt__, "TARGET_UPSIDE_BELOW_CONFIGURED_MINIMUM"),
@@ -53,18 +62,25 @@ def _open_check(plan: dict, opening: Decimal, policy: dict) -> tuple[Status, str
     ):
         if rule[key] is not None and compare(actual, Decimal(rule[key])):
             return Status.NOT_FILLED, reason, facts
-    return Status.OPEN, "FILLED_AT_T1_OPEN", {**facts, "exit_model": rule["exit_model"]}
+    return Status.OPEN, "FILLED_AT_T1_OPEN", {**facts, "exit_model": model}
 
 
 def _mark(row: dict, day: dict, quote: dict, opening: Decimal, high: Decimal, low: Decimal, close: Decimal) -> None:
     position = row["position"]
+    versioned = row["plan"].get("protocol") == POSITION_PROTOCOL
+    pending_exit = position.get("pending_exit")
     entry = Decimal(position["entry"])
     stop = Decimal(position["stop"])
     target = Decimal(row["plan"]["levels"]["target"])
     one_r = entry - Decimal(position["initial_stop"])
     price, upper, lower = close, high, low
     status, reason = Status.OPEN, "CLOSE_MARK"
-    if position["exit_next_open"]:
+    if pending_exit is not None:
+        if pending_exit["session"] != day["trade_date"]:
+            raise ValueError("PAPER_EXPECTED_EXIT_SESSION_MISMATCH")
+        price = upper = lower = opening
+        status, reason = Status.CLOSED, pending_exit["reasons"][0]
+    elif position.get("exit_next_open"):
         price = upper = lower = opening
         status, reason = Status.CLOSED, "PROFIT_PROTECTION_NEXT_OPEN"
     elif opening <= stop:
@@ -72,7 +88,7 @@ def _mark(row: dict, day: dict, quote: dict, opening: Decimal, high: Decimal, lo
         status, reason = Status.CLOSED, "GAP_THROUGH_STOP"
     elif low <= stop:
         price, upper, lower = stop, opening, stop
-        status, reason = Status.CLOSED, "FIXED_STOP_TOUCHED"
+        status, reason = Status.CLOSED, "ACTIVE_STOP_TOUCHED" if versioned else "FIXED_STOP_TOUCHED"
     # On a stop day, only the open and the simulated stop execution are
     # ordered. Daily extremes after the exit cannot affect excursions.
     change = price - entry
@@ -82,12 +98,34 @@ def _mark(row: dict, day: dict, quote: dict, opening: Decimal, high: Decimal, lo
         "pnl_per_unit": str(change), "return": str(change / entry), "r": str(change / one_r),
         "mfe_r": str(mfe_r),
         "mae_r": str(min(Decimal(position["mae_r"]), (lower - entry) / one_r)),
-        "target_seen": position["target_seen"] or upper >= target,
-        "structure": quote["structures"].get(row["plan"]["strategy_version"], "STRUCTURE_NOT_AVAILABLE"),
-        "anchor": quote["current"],
+        "target_seen": position["target_seen"] or (upper >= target and (not versioned or status == Status.OPEN)),
     }
+    if not versioned or status == Status.OPEN:
+        position["anchor"] = quote["current"]
+    if not versioned:
+        position["structure"] = quote["structures"].get(row["plan"]["strategy_version"], "STRUCTURE_NOT_AVAILABLE")
+    if versioned:
+        position.update(
+            active_stop_at_open=str(stop), active_stop_sources=position["stop_sources"],
+            maximum_high=str(max(Decimal(position["maximum_high"]), upper)),
+            max_mfe_drawdown_r=str(max(Decimal(position["max_mfe_drawdown_r"]), mfe_r - change / one_r)),
+            structure_stop_candidate=None, structure_atr=None, next_stop_session=None,
+        )
     if status == Status.CLOSED:
         position.update(exit_date=day["trade_date"], exit_price=str(price), exit_reason=reason)
+        if versioned:
+            reasons = list(pending_exit["reasons"]) if pending_exit else [reason]
+            if pending_exit and opening <= stop:
+                reasons.append("GAP_THROUGH_STOP")
+            position.update(exit_reasons=reasons, pending_exit=None)
+            del row["_indicators"]
+    elif versioned:
+        reason = close_position(position, row["_indicators"], day, (opening, high, low, close))
+        if reason == "LATE_CLOSE_EVIDENCE":
+            row["suspended_at"] = day["trade_date"]
+        else:
+            position["structure"] = quote["structures"].get(row["plan"]["strategy_version"], "STRUCTURE_NOT_AVAILABLE")
+            position["next_stop_session"] = day["next_session"]
     elif position["exit_model"] == "LEGACY_R_PROTECTION" and mfe_r >= _MFE_TRIGGER_R:
         floor = entry + (mfe_r - _MFE_GIVEBACK_R) * one_r
         if close < floor:
@@ -97,7 +135,8 @@ def _mark(row: dict, day: dict, quote: dict, opening: Decimal, high: Decimal, lo
             position.update(stop=str(floor), protection_floor=str(floor))
             reason = "STOP_RAISED_FOR_NEXT_SESSION"
     row["position"] = position
-    _event(row, day, status, reason, position=position)
+    details = {"observation": Status.UNAVAILABLE} if reason == "LATE_CLOSE_EVIDENCE" else {}
+    _event(row, day, status, reason, position=position, **details)
 
 
 def _advance(row: dict, day: dict, policy: dict) -> None:
@@ -137,10 +176,20 @@ def _advance(row: dict, day: dict, policy: dict) -> None:
             "exit_model": facts["exit_model"], "exit_next_open": False,
             "mfe_r": "0", "mae_r": "0", "target_seen": False,
         }
+        if plan.get("protocol") == POSITION_PROTOCOL:
+            origin = plan["structure_origin"]
+            floor = origin["points"][origin["floor_anchor"]][1] if origin is not None else None
+            row["position"].pop("exit_next_open")
+            row["position"].update(
+                initial_structural_floor=floor, structural_floor=floor, pending_exit=None,
+                stop_sources=["INITIAL_STOP"], maximum_high=str(opening), max_mfe_drawdown_r="0",
+                structure=plan["structure"]["stage"],
+            )
+            row["_indicators"] = PositionIndicators(facts["exit_model"], plan["seeds"], day["trade_date"])
     _mark(row, day, quote, opening, high, low, close)
 
 
-def apply_day(records: dict, day: dict, study_id: str, policy: dict) -> None:
+def apply_day(records: dict, day: dict, study_id: str, policy: dict, protocol: str = PROTOCOL) -> None:
     """Advance exact successive sessions before adding newly discovered plans."""
     for row in active_plans(records):
         _advance(row, day, policy)
@@ -154,6 +203,8 @@ def apply_day(records: dict, day: dict, study_id: str, policy: dict) -> None:
             "created_at": day["source"]["observed_at"], "source": day["source"],
             "anchor": day["quotes"][symbol]["current"],
         }
+        if protocol == POSITION_PROTOCOL:
+            plan.update(protocol=protocol, seeds=day["seeds"].get(symbol, []))
         plan["simulation_eligibility"] = (
             "NO_REFERENCE_LEVELS" if not plan["levels"] else "POLICY_UNSET" if not policy
             else "CONDITIONAL_T1" if cohort(plan) in policy.get(version, {}) else "COHORT_NOT_ENABLED"
