@@ -67,6 +67,33 @@ th:first-child,td:first-child{text-align:left}.pending{margin-top:10px}footer{pa
 .metrics{grid-template-columns:repeat(2,minmax(0,1fr))}table{font-size:12px}th,td{padding:6px 3px}}
 """
 
+_COMBINED_STYLES = """
+#paper-research .metrics, #paper-research .cards, #paper-research dl {
+  display: grid; gap: 8px;
+}
+#paper-research .metrics { grid-template-columns: repeat(4, minmax(0, 1fr)); margin-bottom: 12px; }
+#paper-research .cards { grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); }
+#paper-research dl { grid-template-columns: repeat(2, minmax(0, 1fr)); margin-top: 8px; }
+#paper-research .metric, #paper-research .card {
+  min-width: 0; padding: 9px 12px; border: 1px solid var(--border); background: var(--surface-2);
+}
+#paper-research .metric { color: var(--muted); font-size: 14px; }
+#paper-research .metric strong { display: block; color: var(--text); font-size: 20px; }
+#paper-research .small { color: var(--muted); font-size: 14px; }
+#paper-research .notice { margin-top: 8px; padding: 8px; background: #fff8e8; color: var(--warning); }
+#paper-research .activity {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 8px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+#paper-research .activity details { grid-column: 1 / -1; }
+#paper-research .paper-table { overflow-x: auto; margin-top: 6px; }
+#paper-research .paper-table table { min-width: 560px; }
+#paper-research .card details, #paper-research .paper-audit { margin-top: 8px; }
+@media (max-width: 600px) {
+  #paper-research .metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+"""
+
 
 def _label(value: str) -> str:
     return escape(_LABELS.get(value, value))
@@ -211,8 +238,8 @@ def paper_mail_text(view: dict) -> str:
     )
 
 
-def render_paper(view: dict) -> str:
-    day, study = view["trade_date"], view["study"]
+def _paper_sections(view: dict, *, combined: bool = False) -> str:
+    study = view["study"]
     positions, pending, activity = _sections(view)
     closed = sum(row["status"] == Status.CLOSED for row in view["records"].values())
     issues = sum(event.get("observation", event["status"]) == Status.UNAVAILABLE for _, event in activity)
@@ -224,7 +251,6 @@ def render_paper(view: dict) -> str:
     pending_cards = "".join(map(_pending, pending))
     events = "".join(_activity(row, event) for row, event in activity)
     empty_reason = "模拟资格未配置，保留开盘检查证据。" if not study["policy"] else "本轮没有符合条件且仍未退出的模拟成交。"
-    mode = "冻结日报历史复算" if study["mode"] == Mode.HISTORICAL_REPLAY else "合成数据验证"
     rows = "".join(
         f"<tr><th scope='row'>{_label(stat['group'])}</th><td>{stat[Status.CLOSED]}</td>"
         f"<td>{_percent(stat['win_rate'])}</td><td>{_fmt(stat['mean_r'])}</td><td>{_fmt(stat['total_r'])}</td>"
@@ -234,6 +260,51 @@ def render_paper(view: dict) -> str:
     source = view["source"]
     missing = escape("、".join(source.get("missing_target_bars", ())))
     coverage = f'<p class="notice">原日报目标日行情缺失 · {missing}</p>' if missing else ""
+    positions_html = f'<div class="cards">{position_cards}</div>' if position_cards else f'<p>{empty_reason}</p>'
+    pending_html = f'<div class="cards">{pending_cards}</div>' if pending_cards else '<p>当前没有待检查的计划。</p>'
+    activity_html = coverage + (events or '<p>当日无状态变化或影响账本的行情缺口。</p>')
+    performance_note = '<p class="small">各行按独立样本组统计，组间可能重叠。胜率、平均 R 和累计 R 仅使用已结束记录。</p>'
+    performance_table = f"""
+<table><thead><tr><th scope="col">样本组</th><th scope="col">已结束</th><th scope="col">胜率</th>
+<th scope="col">平均 R</th><th scope="col">累计 R</th><th scope="col">持有 / 待查 / 未成交 / 缺证</th></tr></thead>
+<tbody>{rows}</tbody></table>"""
+    notes = '<p>形态和资格用于研究。价格以 USD 计，每个策略和信号为一个模拟单位，展示毛收益。</p>'
+    audit = _facts((
+        ("原日报标识", escape(source["report_id"])), ("原日报 SHA-256", escape(source["report_sha256"])),
+        ("账本 SHA-256", escape(view["ledger_sha256"])), ("模拟协议", escape(study["protocol"])),
+        ("日报采集时间（UTC）", escape(source["observed_at"])), ("研究版本", escape(source["research_version"])),
+    ))
+
+    if combined:
+        mode = "冻结日报历史复算" if study["mode"] == Mode.HISTORICAL_REPLAY else "合成数据验证"
+        return f"""<section id="paper-research" class="panel" aria-labelledby="paper-heading">
+<div class="section-head"><div><h2 id="paper-heading">模拟持仓</h2><p class="section-note">{mode}</p></div></div>
+<div class="metrics">{metrics}</div>
+{positions_html}
+<details class="fold"><summary>待检查计划 · {len(pending)} 笔</summary><div class="fold-content">{pending_html}</div></details>
+<details class="fold"><summary>当日记录</summary><div class="fold-content">{activity_html}</div></details>
+<details class="fold"><summary>研究绩效</summary><div class="fold-content">{performance_note}
+<div class="paper-table" role="region" tabindex="0" aria-label="模拟持仓分组统计">{performance_table}</div></div></details>
+<details class="fold paper-audit"><summary>模拟持仓审计与来源</summary><div class="fold-content">{notes}{audit}</div></details>
+</section>"""
+
+    return f"""<div class="metrics">{metrics}</div>
+<section class="panel" id="positions"><h2>当前模拟持仓 {len(positions)} 只</h2>
+{positions_html}</section>
+<section class="panel" id="pending"><h2>待检查计划</h2>
+{pending_html}</section>
+<section class="panel" id="activity"><h2>当日记录</h2>{activity_html}</section>
+<section class="panel" id="performance"><h2>研究绩效</h2>
+{performance_note}{performance_table}</section>
+<footer>{notes}
+<details><summary>审计与来源</summary>
+{audit}
+</details></footer>"""
+
+
+def render_paper(view: dict) -> str:
+    day, study = view["trade_date"], view["study"]
+    mode = "冻结日报历史复算" if study["mode"] == Mode.HISTORICAL_REPLAY else "合成数据验证"
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>研究模拟持仓 · {day}</title><style>{_STYLES}</style></head><body>
@@ -241,21 +312,20 @@ def render_paper(view: dict) -> str:
 <p>{mode} · {study["mode"]}</p>
 <nav aria-label="报告目录"><a href="#positions">当前持仓</a><a href="#pending">待检查</a>
 <a href="#activity">当日记录</a><a href="#performance">研究绩效</a></nav></div></header>
-<main><div class="metrics">{metrics}</div>
-<section class="panel" id="positions"><h2>当前模拟持仓 {len(positions)} 只</h2>
-{f'<div class="cards">{position_cards}</div>' if position_cards else f'<p>{empty_reason}</p>'}</section>
-<section class="panel" id="pending"><h2>待检查计划</h2>
-{f'<div class="cards">{pending_cards}</div>' if pending_cards else '<p>当前没有待检查的计划。</p>'}</section>
-<section class="panel" id="activity"><h2>当日记录</h2>{coverage}{events or '<p>当日无状态变化或影响账本的行情缺口。</p>'}</section>
-<section class="panel" id="performance"><h2>研究绩效</h2>
-<p class="small">各行按独立样本组统计，组间可能重叠。胜率、平均 R 和累计 R 仅使用已结束记录。</p>
-<table><thead><tr><th scope="col">样本组</th><th scope="col">已结束</th><th scope="col">胜率</th>
-<th scope="col">平均 R</th><th scope="col">累计 R</th><th scope="col">持有 / 待查 / 未成交 / 缺证</th></tr></thead>
-<tbody>{rows}</tbody></table></section>
-<footer><p>形态和资格用于研究。价格以 USD 计，每个策略和信号为一个模拟单位，展示毛收益。</p>
-<details><summary>审计与来源</summary>
-{_facts((("原日报标识", escape(source["report_id"])), ("原日报 SHA-256", escape(source["report_sha256"])),
-         ("账本 SHA-256", escape(view["ledger_sha256"])), ("模拟协议", escape(study["protocol"])),
-         ("日报采集时间（UTC）", escape(source["observed_at"])), ("研究版本", escape(source["research_version"]))))}
-</details></footer></main></body></html>
+<main>{_paper_sections(view)}</main></body></html>
 """
+
+
+def render_combined_paper(daily: bytes, view: dict) -> bytes:
+    """Insert the simulated positions into the frozen layout without re-rendering its records."""
+    head_end = b"</head>"
+    overview_link = '<a href="#overview">今日总览</a>'.encode("utf-8")
+    candidates = b'<section id="candidates" class="panel">'
+    markers = (head_end, overview_link, candidates)
+    if (any(daily.count(marker) != 1 for marker in markers) or b'id="paper-research"' in daily
+            or [daily.index(marker) for marker in markers] != sorted(daily.index(marker) for marker in markers)):
+        raise ValueError("PAPER_COMBINED_UNSUPPORTED_DAILY_LAYOUT")
+    content = daily.replace(head_end, f"<style>{_COMBINED_STYLES}</style></head>".encode("utf-8"), 1)
+    content = content.replace(overview_link, overview_link + '<a href="#paper-research">模拟持仓</a>'.encode("utf-8"), 1)
+    section = _paper_sections(view, combined=True).encode("utf-8")
+    return content.replace(candidates, section + b"\n" + candidates, 1)

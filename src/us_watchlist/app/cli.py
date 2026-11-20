@@ -51,7 +51,7 @@ def main() -> int:
     mail = subcommands.add_parser("iwb-email", help="Email one verified, archived IWB B+C report")
     mail.add_argument("--directory", type=Path, required=True)
     mail.add_argument("--trade-date", type=date.fromisoformat, required=True)
-    paper = subcommands.add_parser("iwb-paper", help="Replay or restore an offline IWB paper ledger")
+    paper = subcommands.add_parser("iwb-paper", help="Add offline simulated positions to an IWB daily report")
     paper.add_argument("--ledger-root", type=Path, required=True)
     paper.add_argument("--start-date", type=date.fromisoformat, required=True)
     paper.add_argument("--trade-date", type=date.fromisoformat, required=True)
@@ -59,6 +59,7 @@ def main() -> int:
     paper.add_argument("--initialize", action="store_true", help="Explicitly create the first session")
     paper.add_argument("--policy", type=Path, help="Explicit offline research parameters, omit for evidence only")
     paper.add_argument("--protocol", choices=(PROTOCOL, POSITION_PROTOCOL), default=PROTOCOL)
+    paper.add_argument("--standalone", action="store_true", help="Generate the legacy standalone paper views")
     paper.add_argument("--expect-previous", help="Expected prior ledger SHA-256 from an independent receipt")
     args = parser.parse_args()
 
@@ -97,6 +98,7 @@ def main() -> int:
             output, digest = replay_iwb(
                 args.ledger_root, args.start_date, args.trade_date, directory=args.directory, policy_path=args.policy,
                 initialize=args.initialize, expect_previous=args.expect_previous, protocol=args.protocol,
+                combined=not args.standalone,
             )
             print(f"{output}\nPAPER_LEDGER_SHA256 {digest}")
         else:

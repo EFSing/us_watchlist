@@ -2,6 +2,7 @@
 
 import json
 from datetime import date, datetime
+from hashlib import sha256
 from pathlib import Path
 
 from us_watchlist.app.paper_inputs import load_day
@@ -10,7 +11,7 @@ from us_watchlist.domain.paper import BASIS, POSITION_PROTOCOL, PROTOCOL, Mode, 
 from us_watchlist.integrations.local_artifacts import publish_once, read_artifact
 from us_watchlist.integrations.paper_ledger import canonical, publish_day, restore_day, study_identity
 from us_watchlist.integrations.xnys import next_session, regular_windows, sessions_between
-from us_watchlist.reporting.paper_html import paper_mail_text, render_paper
+from us_watchlist.reporting.paper_html import paper_mail_text, render_combined_paper, render_paper
 from us_watchlist.tracking.paper import active_plans, apply_day, summarize
 
 
@@ -37,9 +38,29 @@ def _check_position_day(day: dict, current, following) -> None:
                 raise ValueError("PAPER_POSITION_SEED_MISMATCH")
 
 
+def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
+    if not isinstance(expected, str) or len(expected) != 64 or any(char not in "0123456789abcdef" for char in expected):
+        raise ValueError("PAPER_COMBINED_INVALID_REPORT_SHA")
+    path = root / ".report-sources" / f"{expected}.bin"
+    from_archive = report is not None
+    if report is None:
+        try:
+            report = read_artifact(path)
+        except FileNotFoundError as error:
+            raise FileNotFoundError(
+                "PAPER_COMBINED_SOURCE_MISSING: provide --directory with the original IWB archive"
+            ) from error
+    if sha256(report).hexdigest() != expected:
+        raise ValueError("PAPER_REPORT_SHA_MISMATCH")
+    if from_archive:
+        publish_once(path, report)
+    return report
+
+
 def run_study(
     root: Path, mode: Mode, start: date, target: date, policy: dict, *,
     evidence_loader=None, initialize: bool = False, expect_previous: str | None = None, protocol: str = PROTOCOL,
+    combined: bool = False, archived_report: bytes | None = None,
 ) -> tuple[Path, dict]:
     if mode not in (Mode.HISTORICAL_REPLAY, Mode.SYNTHETIC):
         raise ValueError("PAPER_PROSPECTIVE_DISABLED")
@@ -80,10 +101,11 @@ def run_study(
     ledger = output / "day.json"
     if evidence_loader is None:
         evidence, digest = restore_day(ledger, identity, head, str(target))
-        advance(evidence, len(dates) - 1)
     else:
         evidence = evidence_loader({row["plan"]["symbol"] for row in active_plans(records)})
-        advance(evidence, len(dates) - 1)
+    advance(evidence, len(dates) - 1)
+    daily = _combined_source(root, evidence["source"]["report_sha256"], archived_report) if combined else None
+    if evidence_loader is not None:
         if initialize:
             publish_once(manifest, canonical(study))
         digest = publish_day(ledger, identity, head, evidence)
@@ -92,14 +114,17 @@ def run_study(
         row.pop("_indicators", None)
     view = {"study": study, "trade_date": str(target), "ledger_sha256": digest,
             "source": evidence["source"], "records": records, "performance": summarize(records)}
-    publish_once(output / "paper-report.html", render_paper(view).encode("utf-8"))
-    publish_once(output / "paper-email.txt", paper_mail_text(view).encode("utf-8"))
+    if daily is not None:
+        publish_once(output / "report.html", render_combined_paper(daily, view))
+    else:
+        publish_once(output / "paper-report.html", render_paper(view).encode("utf-8"))
+        publish_once(output / "paper-email.txt", paper_mail_text(view).encode("utf-8"))
     return output, view
 
 
 def replay_iwb(
     root: Path, start: date, target: date, *, directory: Path | None, policy_path: Path | None,
-    initialize: bool, expect_previous: str | None, protocol: str = PROTOCOL,
+    initialize: bool, expect_previous: str | None, protocol: str = PROTOCOL, combined: bool = False,
 ) -> tuple[Path, str]:
     policy = json.loads(read_artifact(policy_path)) if policy_path is not None else {}
     position_policy = policy if protocol == POSITION_PROTOCOL else None
@@ -109,5 +134,7 @@ def replay_iwb(
             lambda symbols: load_day(directory, target, symbols, position_policy=position_policy)
         ) if directory is not None else None,
         initialize=initialize, expect_previous=expect_previous, protocol=protocol,
+        combined=combined,
+        archived_report=read_artifact(directory / "report.html") if combined and directory is not None else None,
     )
     return output, view["ledger_sha256"]
