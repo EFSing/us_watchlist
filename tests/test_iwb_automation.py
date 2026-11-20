@@ -124,6 +124,7 @@ class AutomationTests(unittest.TestCase):
         retry.assert_called_once_with()
         verify.assert_called_once_with(self.root / "attempt-2", TARGET)
         self.assertEqual(outputs["report_name"], DAILY_PREFIX + TARGET.isoformat())
+        self.assertEqual(outputs["email_report_dir"], str(self.root / "attempt-2"))
         self.assertEqual(outputs["diagnostic_attempt_1"], str(self.root / "attempt-1"))
         self.assertNotIn("diagnostic_attempt_2", outputs)
         self.assertEqual(json.loads(Path(outputs["diagnostic_receipt"]).read_bytes()), state)
@@ -232,6 +233,7 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(state["status"], "REUSED_PUBLISHED_REPORT")
         self.assertEqual(state["existing_report"]["report_sha256"], run["report_sha256"])
         self.assertNotIn("report_name", outputs)
+        self.assertEqual(outputs["email_report_dir"], str(self.root / "rerun" / "restored"))
         observe.assert_not_called()
         scheduled_at = datetime(2025, 11, 28, 22, 37, tzinfo=UTC)
         with (
@@ -245,6 +247,7 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(state["status"], "REUSED_PUBLISHED_REPORT")
         self.assertEqual(state["existing_report"]["report_sha256"], run["report_sha256"])
         self.assertNotIn("report_name", outputs)
+        self.assertEqual(outputs["email_report_dir"], str(self.root / "scheduled-rerun" / "restored"))
         observe.assert_not_called()
         (published / "report.html").write_bytes(b"altered")
         with self.assertRaisesRegex(ValueError, "IWB_ARCHIVED_FILE_SHA_MISMATCH"):

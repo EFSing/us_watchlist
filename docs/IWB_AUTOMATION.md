@@ -6,6 +6,34 @@
 两种作业共用串行发布组，令牌仅有 `actions: read` 和 `contents: read`，流程只获取输入并发布私有归档。
 [GitHub 调度语法](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
+## 邮件交付与 Bark 故障告警
+
+新日报沿用既有 Gmail → QQ 的 SMTP 配置方式，但 `us_watchlist` 是独立仓库，旧仓库的 Secrets 不会自动继承。
+请在本仓库 **Settings → Secrets and variables → Actions → Repository secrets** 单独设置：
+
+| Secret | 含义 |
+| --- | --- |
+| `SMTP_HOST` | `smtp.gmail.com` |
+| `SMTP_PORT` | `587` |
+| `SMTP_USERNAME`、`SMTP_FROM` | Gmail 发信地址 |
+| `SMTP_PASSWORD` | Gmail 应用专用密码，不使用账户登录密码 |
+| `SMTP_TO` | 实际接收报告的 QQ 邮箱 |
+| `SMTP_USE_TLS` | `true`（STARTTLS） |
+| `BARK_ENDPOINT` | 既有 Bark 完整 POST 地址，包含所需设备鉴权 |
+
+只有日报状态为 `SUCCESS`、`PARTIAL_COVERAGE` 或已验证归档的 `REUSED_PUBLISHED_REPORT` 时，且本轮所有归档步骤成功，
+才发送中文摘要邮件并附上与 `report.html` 字节相同的完整 HTML 附件。`PARTIAL_COVERAGE` 在邮件主题与正文中明确显示「部分覆盖」。
+同一交易日手动补跑若复用归档，仍会再发送一次邮件，便于补发；正式日报身份及行情不会重复生成。
+未配置 SMTP、邮件验证或发送失败均使本次运行失败，原已发布的私有日报归档仍保留。
+
+失败告警由独立的后置 Actions 作业处理：只要日报作业结论为 `failure`，即向 `BARK_ENDPOINT` 发送一次
+包含交易日、日报状态及运行链接的 Bark。采集、归档、SMTP 任一环节失败均适用。成功不发 Bark；
+XNYS 休市及定时开关关闭导致的正常跳过不发邮件或 Bark。平台未创建工作流运行、整次运行被取消、
+或 Bark 服务自身不可用时，GitHub Actions 无法保证手机端收到告警。
+
+首次启用前需先在审阅 PR 的合成测试和 CI 中验证分流，再在密钥配置完成后手动运行一次，检查
+`IWB_EMAIL_SENT`、QQ 邮箱收到正文及完整附件；用隔离故障样本验证 Bark 送达，不发送真实交易指令。
+
 定时事件根据 GitHub API 的原始 `created_at` 锁定纽约目标日，无手动日期参数。XNYS 休市记为
 `SKIPPED_XNYS_CLOSED`，开市日采用该会话的常规收盘时刻，短市同样等待至少 30 分钟。作业启动、
 每轮采集启动及 Yahoo 采集完成均须在纽约目标日。跨日记为 `SKIPPED_SCHEDULE_EXPIRED`，保留已取得的诊断。
@@ -30,7 +58,7 @@
    `PARTIAL_COVERAGE`，保留缺口及各规则资格。参考计划、量能、2→3 结构和 C 止损距离以未验证的研究观察展示。
 5. 下载规范日报、尝试诊断及本次新发布或引用的成份 ZIP，记录产物名称、ID、来源运行及保留期。
    用 Actions 提供的 digest 核对 ZIP SHA-256，用 `iwb-verify` 核对报告身份、输入、HTML、官方成份与 Yahoo ZIP 的 SHA-256。
-   核对作业步骤限于采集、研究日报和私有归档，并记录通知、IBKR 调用及真实订单均未发生。命中已有归档可验证恢复，
+   首次定时验收时核对本次实际启用的通知版本和结果，IBKR 调用及真实订单均不得发生。命中已有归档可验证恢复，
    首次前瞻验收须取得该日的新采集。
 
 若没有 `schedule` 运行、作业失败或未发布，先核对变量、工作流版本、队列、XNYS 状态及诊断。记录未完成的定时验收，
