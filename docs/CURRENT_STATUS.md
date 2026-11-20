@@ -47,6 +47,9 @@
   日报列出目标日覆盖、120 日完整历史覆盖和各规则历史不足，逐股保留缺口。定时执行状态以仓库变量
   `US_IWB_SCHEDULE_ENABLED` 的实际值为准。首个自然定时新采集待验收。
   [仓库变量](https://github.com/EFSing/us_watchlist/settings/variables/actions) · [运行手册](IWB_AUTOMATION.md#首次定时验收)
+- 邮件通知改动以独立审阅 PR 为准：可发布的日报在归档成功后通过 Gmail→QQ 发送中文摘要和完整 HTML 附件；
+  采集、归档或邮件失败时由后置作业发送 Bark，正常跳过不通知。实际使用前须在本仓库配置 `SMTP_*` 与
+  `BARK_ENDPOINT` Secrets，并分别验证真实收件和手机告警，不能仅凭合成测试声称送达。
 
 ## B+C 结构、量能和参考计划
 

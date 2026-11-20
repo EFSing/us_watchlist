@@ -28,6 +28,9 @@ jobs:
       cancel-in-progress: false
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    outputs:
+      trade_date: ${{ steps.daily.outputs.target }}
+      report_status: ${{ steps.daily.outputs.status }}
     env:
       PYTHONDONTWRITEBYTECODE: '1'
     steps:
@@ -83,3 +86,56 @@ jobs:
             ${{ steps.daily.outputs.diagnostic_attempt_2 }}
           if-no-files-found: error
           retention-days: 7
+      - name: Email the verified B+C report
+        if: ${{ success() && steps.daily.outputs.email_report_dir != '' }}
+        env:
+          IWB_EMAIL_DIR: ${{ steps.daily.outputs.email_report_dir }}
+          IWB_TRADE_DATE: ${{ steps.daily.outputs.target }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+          SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
+        run: us-watchlist iwb-email --directory "$IWB_EMAIL_DIR" --trade-date "$IWB_TRADE_DATE"
+
+  notify-failure:
+    if: ${{ always() && needs.daily.result == 'failure' }}
+    needs: daily
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Send Bark when collection, publication, or mail fails
+        env:
+          BARK_ENDPOINT: ${{ secrets.BARK_ENDPOINT }}
+          IWB_TRADE_DATE: ${{ needs.daily.outputs.trade_date }}
+          IWB_REPORT_STATUS: ${{ needs.daily.outputs.report_status }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          from urllib.request import Request, urlopen
+
+          endpoint = os.environ.get("BARK_ENDPOINT", "").strip()
+          if not endpoint:
+              raise SystemExit("IWB_BARK_NOT_CONFIGURED")
+          run_url = (f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+                     f"/actions/runs/{os.environ['GITHUB_RUN_ID']}")
+          target = os.environ.get("IWB_TRADE_DATE") or "未确定"
+          stage = os.environ.get("IWB_REPORT_STATUS") or "未取得状态"
+          payload = {"title": "美股 IWB B+C 日报故障",
+                     "body": f"交易日：{target}；日报状态：{stage}。采集、归档或邮件未完成，请检查 Actions。",
+                     "url": run_url}
+          request = Request(endpoint, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
+                            headers={"Content-Type": "application/json; charset=utf-8"}, method="POST")
+          try:
+              with urlopen(request, timeout=20) as response:
+                  result = json.loads(response.read().decode("utf-8"))
+              if isinstance(result, dict) and result.get("code") not in (None, 200, 0):
+                  raise ValueError("Bark rejected the push")
+          except Exception as error:
+              raise SystemExit(f"IWB_BARK_SEND_FAILED {type(error).__name__}") from None
+          print("IWB_BARK_SENT")
+          PY

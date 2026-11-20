@@ -102,6 +102,7 @@ def _execute(
         if holdings_date is not None and previous["holdings_date"] != holdings_date.isoformat():
             raise ValueError("IWB_PUBLISHED_REPORT_USES_ANOTHER_VERSION")
         state["existing_report"] = {"run_id": existing.run_id, "report_sha256": previous["report_sha256"]}
+        outputs["email_report_dir"] = str(restored)
         return "REUSED_PUBLISHED_REPORT"
 
     pool = workspace / "pool"
@@ -125,7 +126,7 @@ def _execute(
             verify_completed(output, target)
             record["report_sha256"] = run["report_sha256"]
             outputs.pop(f"diagnostic_attempt_{attempt}")
-            outputs.update({"report_name": name, "report_dir": str(output)})
+            outputs.update({"report_name": name, "report_dir": str(output), "email_report_dir": str(output)})
             return outcome
         if outcome not in RETRYABLE_COVERAGE or attempt == 2:
             return outcome
