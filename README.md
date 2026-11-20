@@ -59,3 +59,9 @@ HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用
 
 Actions 手动补跑、定时验收、短期归档和跨设备校验见 [IWB 日报自动化](docs/IWB_AUTOMATION.md)。
 定时执行由 `US_IWB_SCHEDULE_ENABLED` 控制，默认关闭。
+
+## IWB 研究模拟持仓
+
+`us-watchlist iwb-paper` 可从已验证的日报归档建立离线历史复算，逐个 XNYS 交易日还原模拟计划与持仓，
+并生成独立的中文 HTML 和邮件摘要文本。政策未配置时只保留计划、价格检查和待决原因。
+操作命令、冻结样本和启用条件见 [研究模拟持仓](docs/IWB_PAPER.md)。

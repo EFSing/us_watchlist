@@ -13,6 +13,7 @@ from test_iwb_daily import HoldingsResponse, ROOT, TARGET, holdings
 from test_yahoo_chart import response
 from us_watchlist.app.iwb_automation import DAILY_PREFIX, POOL_PREFIX, _manual_target, _scheduled_target, automate_iwb
 from us_watchlist.app.iwb_daily import HISTORY_SESSIONS, REPORT_FILES, observe_iwb, verify_completed
+from us_watchlist.app.iwb_paper import replay_iwb
 from us_watchlist.integrations.github_artifacts import Artifact, GitHubArtifacts
 from us_watchlist.integrations.iwb_holdings import refresh_holdings
 from us_watchlist.integrations.xnys import regular_windows
@@ -249,6 +250,19 @@ class AutomationTests(unittest.TestCase):
         self.assertNotIn("report_name", outputs)
         self.assertEqual(outputs["email_report_dir"], str(self.root / "scheduled-rerun" / "restored"))
         observe.assert_not_called()
+        restored = Path(outputs["email_report_dir"])
+        original_hashes = {name: sha256((restored / name).read_bytes()).hexdigest() for name in REPORT_FILES}
+        with (
+            patch("us_watchlist.integrations.yahoo_chart._fetch") as network,
+            patch("us_watchlist.integrations.smtp_mail.smtplib.SMTP") as smtp,
+        ):
+            companion, _ = replay_iwb(self.root / "paper", TARGET, TARGET, directory=restored,
+                                      policy_path=None, initialize=True, expect_previous=None)
+        network.assert_not_called()
+        smtp.assert_not_called()
+        self.assertIn("当前模拟持仓 0 只", (companion / "paper-report.html").read_text(encoding="utf-8"))
+        self.assertEqual({name: sha256((restored / name).read_bytes()).hexdigest() for name in REPORT_FILES},
+                         original_hashes)
         (published / "report.html").write_bytes(b"altered")
         with self.assertRaisesRegex(ValueError, "IWB_ARCHIVED_FILE_SHA_MISMATCH"):
             verify_completed(published, TARGET)
