@@ -139,6 +139,28 @@ class PaperTests(unittest.TestCase):
     def position_session(self, day, policy, **options):
         return run_day(self.root, day, policy=policy, protocol=POSITION_PROTOCOL, **options)
 
+    def test_combined_view_includes_open_positions_on_the_daily_page(self):
+        first, second, _, _ = demo_days()
+        daily = (
+            '<!doctype html><html><head><title>IWB</title></head><body><main>'
+            '<nav class="section-nav"><a href="#overview">今日总览</a></nav>'
+            '<section id="overview">原始总览</section>'
+            '<section id="candidates" class="panel">B/C 逐股候选</section></main></body></html>'
+        ).encode("utf-8")
+        for day in (first, second):
+            day["source"]["report_sha256"] = sha256(daily).hexdigest()
+        run_day(self.root, first, initialize=True, combined=True, archived_report=daily)
+        output, _ = run_day(self.root, second, combined=True, archived_report=daily)
+        report = (output / "report.html").read_text(encoding="utf-8")
+        self.assertEqual(report.count("<main>"), 1)
+        self.assertIn('href="#paper-research"', report)
+        self.assertIn("B/C 逐股候选", report)
+        self.assertIn("ALFA · B 突破回踩", report)
+        self.assertIn("BRAV · C 均衡", report)
+        self.assertIn("浮动 R", report)
+        self.assertIn("当前模拟持仓<strong>2 只</strong>", report)
+        self.assertLess(report.index('id="paper-research"'), report.index('id="candidates"'))
+
     def test_structure_trail_uses_confirmation_close_atr_and_restarts_with_scheduled_stop(self):
         policy = position_policy(
             structure_exit=True, pivot={"radius": 1, "min_separation": 2, "require_rebound": False},

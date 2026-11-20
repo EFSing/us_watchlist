@@ -16,6 +16,7 @@ from us_watchlist.app.iwb_daily import HISTORY_SESSIONS, REPORT_FILES, observe_i
 from us_watchlist.app.iwb_paper import replay_iwb
 from us_watchlist.integrations.github_artifacts import Artifact, GitHubArtifacts
 from us_watchlist.integrations.iwb_holdings import refresh_holdings
+from us_watchlist.integrations.paper_archive import read_report_records
 from us_watchlist.integrations.xnys import regular_windows
 from us_watchlist.integrations.yahoo_chart import HOSTS, _chart_url
 
@@ -258,9 +259,31 @@ class AutomationTests(unittest.TestCase):
         ):
             companion, _ = replay_iwb(self.root / "paper", TARGET, TARGET, directory=restored,
                                       policy_path=None, initialize=True, expect_previous=None)
+            combined_root = self.root / "paper-combined"
+            combined, digest = replay_iwb(combined_root, TARGET, TARGET, directory=restored,
+                                          policy_path=None, initialize=True, expect_previous=None, combined=True)
         network.assert_not_called()
         smtp.assert_not_called()
         self.assertIn("当前模拟持仓 0 只", (companion / "paper-report.html").read_text(encoding="utf-8"))
+        merged_path = combined / "report.html"
+        merged = merged_path.read_bytes()
+        original = (restored / "report.html").read_bytes()
+        self.assertIn(b'href="#paper-research"', merged)
+        self.assertIn(b'id="paper-research"', merged)
+        self.assertIn("模拟资格未配置".encode(), merged)
+        self.assertEqual(list(combined.glob("*.html")), [merged_path])
+        self.assertFalse((combined / "paper-email.txt").exists())
+        self.assertEqual(read_report_records(merged, sha256(merged).hexdigest()),
+                         read_report_records(original, run["report_sha256"]))
+        merged_path.unlink()
+        self.assertEqual(replay_iwb(combined_root, TARGET, TARGET, directory=None, policy_path=None,
+                                    initialize=False, expect_previous=None, combined=True), (combined, digest))
+        self.assertEqual(merged_path.read_bytes(), merged)
+        cache = combined_root / ".report-sources" / f"{run['report_sha256']}.bin"
+        cache.write_bytes(b"altered")
+        with self.assertRaisesRegex(ValueError, "PAPER_REPORT_SHA_MISMATCH"):
+            replay_iwb(combined_root, TARGET, TARGET, directory=None, policy_path=None,
+                       initialize=False, expect_previous=None, combined=True)
         self.assertEqual({name: sha256((restored / name).read_bytes()).hexdigest() for name in REPORT_FILES},
                          original_hashes)
         (published / "report.html").write_bytes(b"altered")

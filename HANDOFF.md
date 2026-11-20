@@ -18,6 +18,7 @@
 | [#9](https://github.com/EFSing/us_watchlist/pull/9) | [PR 合并记录](https://github.com/EFSing/us_watchlist/pull/9) | [按合并 SHA 核对 main push CI](https://github.com/EFSing/us_watchlist/actions/workflows/ci.yml?branch=main) |
 | [#10](https://github.com/EFSing/us_watchlist/pull/10) | `a5a470f918247b57133870a160d1f5a5eb9846cd` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44695960917) |
 | [#11](https://github.com/EFSing/us_watchlist/pull/11) | `2381431379ac477e25e958ad826453f34b1d5a71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44698052180) |
+| [#12](https://github.com/EFSing/us_watchlist/pull/12) | `a6374739fc5fa8a0743b0ef4cb1cf2fc50c15ee3` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44707934071) |
 
 ## 2026-11-20 接手与模拟研究审阅
 
@@ -26,14 +27,14 @@
 2026-11-19 的 [运行 44698935120](https://github.com/EFSing/us_watchlist/actions/runs/44698935120)
 是 `workflow_dispatch`，日报归档和邮件步骤成功，继续单独核对首次自然定时运行。
 
-研究模拟持仓由 `codex/iwb-research-paper-tracking` 审阅。离线账本、伴随报告、两日冻结复算和规则待决项见
+研究模拟持仓已随 #12 合并。离线账本、日报视图、两日冻结复算和规则待决项见
 [研究模拟持仓](docs/IWB_PAPER.md)。11-19 冻结归档在
 `.runtime/data/iwb-validation/2026-11-19-hosted-44698935120/daily/`。
 生产启用的阻碍是 B/C 专属模拟政策、前瞻证据的可用时间和长期账本恢复约定。
 
-同一 Draft [#12](https://github.com/EFSing/us_watchlist/pull/12) 审阅 V2 共用退出协议。
-用 `iwb-paper --protocol us_iwb_paper_position_v2` 建立独立离线链。V1 继续复原原研究，
-原日报按既有 SHA 核验。先审阅各组资格及退出参数，再扩大样本进行历史对照。
+合并时的 `PROJECT_GOVERNANCE_STATE_CONFLICT` 已核对，原交接将 #12 标为 Draft，当前以
+上表的合并 SHA 和 push CI 为准。使用 `iwb-paper --protocol us_iwb_paper_position_v2` 建立离线链，
+输出一份包含筛选和模拟持仓的 `report.html`。V1 继续复原原研究。先审阅各组资格和退出参数，再扩大历史对照样本。
 
 ## 历史验收与调度
 
