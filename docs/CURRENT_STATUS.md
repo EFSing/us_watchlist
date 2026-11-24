@@ -56,7 +56,9 @@
   [Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44860940918)
 - VPS 接入由仓库变量切换，使用同一自动校验和归档发布组。上线状态以 VPS timer、变量回读及首次真实运行收据为准。
   [VPS 部署与回滚](IWB_AUTOMATION.md#vps-定时触发)
-- VPS 触发器支持仅限美股仓库的 GitHub App 认证。认证切换以 VPS 服务配置和安装令牌检查为准。
+- 2026-11-24 北京时间 14:28，VPS 服务切换到仅限美股仓库的 GitHub App 认证。部署后申请安装令牌
+  并读取工作流成功，timer 已启用。首次自然 App 触发预计为 11-25 06:37，待运行收据验收。
+  [认证 PR](https://github.com/EFSing/us_watchlist/pull/16) · [合并后 CI](https://github.com/EFSing/us_watchlist/actions/runs/45340472065)
 
 ## B+C 结构、量能和参考计划
 

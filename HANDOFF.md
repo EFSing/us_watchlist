@@ -20,12 +20,19 @@
 | [#11](https://github.com/EFSing/us_watchlist/pull/11) | `2381431379ac477e25e958ad826453f34b1d5a71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44698052180) |
 | [#12](https://github.com/EFSing/us_watchlist/pull/12) | `a6374739fc5fa8a0743b0ef4cb1cf2fc50c15ee3` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44707934071) |
 | [#13](https://github.com/EFSing/us_watchlist/pull/13) | `e575783bc49296880891d3786dc6b9c64352ff71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44710011716) |
+| [#14](https://github.com/EFSing/us_watchlist/pull/14) | `850064f41fc74f8fbee7e9ea230a90f970990e81` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/45317211563) |
+| [#16](https://github.com/EFSing/us_watchlist/pull/16) | `75f1874478686f622069d31011bd564f295ef698` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/45340472065) |
 
 ## 2026-11-24 VPS 认证迁移
 
-审阅分支 `codex/iwb-vps-github-app` 为美股 VPS 调度增加 GitHub App 认证。现行 timer 已启用，
-认证方式以 VPS 服务配置和只读检查为准。11-23 已由 VPS 触发并完成 [日报及邮件](https://github.com/EFSing/us_watchlist/actions/runs/45318327898)。
-部署和切换流程见 [运行手册](docs/IWB_AUTOMATION.md#vps-定时触发)。
+北京时间 14:28，VPS 生产服务切换到仅安装在本仓库的 [GitHub App](https://github.com/settings/installations/185271631)。
+部署后的只读认证检查返回 `IWB_VPS_GITHUB_APP_AUTH_OK`，`US_IWB_VPS_SCHEDULE_ENABLED=true`。
+私钥在 VPS 的 `/etc/us-iwb-dispatch/github-app.pem`，属主 root，权限 `0600`。
+
+timer 已启用并等待北京时间 11-25 06:37。首次自然 App 触发待验收，从服务日志取得运行链接，
+核对触发来源、纽约目标日、日报归档和邮件。切换前的 [11-23 日报](https://github.com/EFSing/us_watchlist/actions/runs/45318327898)
+验证了 VPS 调度通道。旧服务和脚本备份在 VPS 的 `/etc/us-iwb-dispatch/rollback-pat.xdCTghLt`，
+旧 PAT 留作回滚。见 [VPS 运行手册](docs/IWB_AUTOMATION.md#vps-定时触发)。
 
 ## 2026-11-24 调度核对
 
