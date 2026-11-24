@@ -3,7 +3,8 @@
 [日报工作流](../.github/workflows/iwb-daily.yml) 提供默认分支手动补跑和 GitHub Actions 原生定时。
 `America/New_York` 周一至周五 17:37 对应夏令时 21:37 UTC、标准时 22:37 UTC。
 仓库变量 `US_IWB_SCHEDULE_ENABLED=true` 放行定时作业，变量缺失或为 `false` 时跳过定时作业。
-两种作业共用串行发布组，令牌仅有 `actions: read` 和 `contents: read`，流程只获取输入并发布私有归档。
+设置 `US_IWB_VPS_SCHEDULE_ENABLED=true` 时，定时入口切换为 VPS 的 `workflow_dispatch`。
+各入口共用串行发布组，Actions 作业的令牌仅有 `actions: read` 和 `contents: read`。
 [GitHub 调度语法](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule)
 
 ## 邮件交付与 Bark 故障告警
@@ -24,6 +25,7 @@
 只有日报状态为 `SUCCESS`、`PARTIAL_COVERAGE` 或已验证归档的 `REUSED_PUBLISHED_REPORT` 时，且本轮所有归档步骤成功，
 才发送中文摘要邮件并附上与 `report.html` 字节相同的完整 HTML 附件。`PARTIAL_COVERAGE` 在邮件主题与正文中明确显示「部分覆盖」。
 同一交易日手动补跑若复用归档，仍会再发送一次邮件，便于补发；正式日报身份及行情不会重复生成。
+定时作业复用归档时只校验已有产物。归档成功后若邮件失败，按手动补跑流程补发。
 未配置 SMTP、邮件验证或发送失败均使本次运行失败，原已发布的私有日报归档仍保留。
 
 失败告警由独立的后置 Actions 作业处理：只要日报作业结论为 `failure`，即向 `BARK_ENDPOINT` 发送一次
@@ -43,6 +45,31 @@ XNYS 休市及定时开关关闭导致的正常跳过不发邮件或 Bark。平�
 新定时采集逐股要求目标日有效 OHLCV、正确的常规会话和已冻结的响应时间。Yahoo `regularMarketTime` 须属于纽约目标日，
 达到 XNYS 当日收盘且早于或等于收到响应的时点。未获确认的目标日线从筛选输入剔除，记入逐股诊断并计入覆盖缺口。
 该字段是 Yahoo 的就绪依据，后续修订及历史点时仍待验证。手动历史补跑继续核对 XNYS、行情时段、可用时间及发布门槛。
+
+## VPS 定时触发
+
+VPS 使用 systemd 在纽约工作日 17:37 调用 GitHub API，向 `main` 发送明确的纽约会话日期
+`vps_trade_date`。Actions 使用与原生定时相同的 XNYS、收盘等待、跨日和 Yahoo 就绪校验，诊断收据
+以 `trigger=vps_schedule` 标明来源。VPS 只负责触发，采集、归档、邮件和作业失败 Bark 都由 Actions 执行。
+
+部署使用审阅过的文件。将 [触发脚本](../src/us_watchlist/integrations/github_dispatch.py) 安装至
+`/usr/local/lib/us-iwb-dispatch/github_dispatch.py`，将 [服务](../deploy/systemd/us-iwb-dispatch.service) 和
+[定时器](../deploy/systemd/us-iwb-dispatch.timer) 安装至 `/etc/systemd/system/`。创建只含本仓库
+`Actions: write` 权限的细粒度令牌，以 root 所有、权限 `0600` 写入
+`/etc/us-iwb-dispatch/github-token`，并在到期前轮换。服务通过 systemd 的 `LoadCredential` 读取。
+[GitHub 触发权限](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
+
+切换顺序如下。
+
+1. 执行 `systemctl daemon-reload`，用 `systemd-analyze verify` 检查单元。保持定时器关闭，
+   先用服务发起一次验证请求。留存日志中的运行链接，确认 VPS 开关关闭时作业跳过。
+2. 将 `US_IWB_VPS_SCHEDULE_ENABLED` 设为 `true` 并回读，执行
+   `systemctl enable --now us-iwb-dispatch.timer`，核对 `systemctl list-timers us-iwb-dispatch.timer`。
+   此时原生 cron 的作业跳过，手动补跑继续可用。回滚时停用 timer，再将 VPS 开关设为 `false`，
+   核对原生开关为 `true`。
+3. 从 `journalctl -u us-iwb-dispatch.service` 取得运行链接，核对 Actions 作业、日报归档及邮件。
+   平台拒绝请求或响应不明时先查当日运行列表。服务只提交一次，关机错过的会话按手动补跑流程处理。
+   API 接受请求只确认已创建运行，后续仍依赖 GitHub runner。
 
 ## 首次定时验收
 

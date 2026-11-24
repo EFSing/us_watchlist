@@ -47,6 +47,7 @@ def main() -> int:
     automation.add_argument("--event", choices=("schedule", "workflow_dispatch"), required=True)
     automation.add_argument("--trade-date", type=date.fromisoformat)
     automation.add_argument("--holdings-date", type=date.fromisoformat)
+    automation.add_argument("--vps-trade-date", type=date.fromisoformat)
     automation.add_argument("--code-sha", required=True)
     mail = subcommands.add_parser("iwb-email", help="Email one verified, archived IWB B+C report")
     mail.add_argument("--directory", type=Path, required=True)
@@ -84,7 +85,7 @@ def main() -> int:
         elif args.command == "iwb-automation":
             state, outputs = automate_iwb(
                 args.workspace, GitHubArtifacts(), args.code_sha, scheduled=args.event == "schedule",
-                trade_date=args.trade_date, holdings_date=args.holdings_date,
+                trade_date=args.trade_date, holdings_date=args.holdings_date, vps_trade_date=args.vps_trade_date,
             )
             write_workflow_outputs(outputs)
             print(json.dumps(state, ensure_ascii=True))

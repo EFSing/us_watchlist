@@ -12,6 +12,9 @@ on:
       holdings_date:
         description: 'Exact official holdings date YYYY-MM-DD for historical recovery'
         type: string
+      vps_trade_date:
+        description: 'VPS automatic observation date in America/New_York, YYYY-MM-DD'
+        type: string
 
 permissions:
   actions: read
@@ -21,8 +24,10 @@ jobs:
   daily:
     if: >-
       (github.event_name == 'workflow_dispatch' &&
-      github.ref == format('refs/heads/{0}', github.event.repository.default_branch)) ||
-      (github.event_name == 'schedule' && vars.US_IWB_SCHEDULE_ENABLED == 'true')
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      (inputs.vps_trade_date == '' || vars.US_IWB_VPS_SCHEDULE_ENABLED == 'true')) ||
+      (github.event_name == 'schedule' && vars.US_IWB_SCHEDULE_ENABLED == 'true' &&
+      vars.US_IWB_VPS_SCHEDULE_ENABLED != 'true')
     concurrency:
       group: us-iwb-bc-canonical-publisher
       cancel-in-progress: false
@@ -49,12 +54,14 @@ jobs:
           IWB_DEFAULT_BRANCH: ${{ github.ref_name }}
           REQUESTED_TRADE_DATE: ${{ inputs.trade_date }}
           REQUESTED_HOLDINGS_DATE: ${{ inputs.holdings_date }}
+          VPS_TRADE_DATE: ${{ inputs.vps_trade_date }}
         shell: bash
         run: |
           args=()
           if [[ "$GITHUB_EVENT_NAME" == 'workflow_dispatch' ]]; then
             if [[ -n "$REQUESTED_TRADE_DATE" ]]; then args+=(--trade-date "$REQUESTED_TRADE_DATE"); fi
             if [[ -n "$REQUESTED_HOLDINGS_DATE" ]]; then args+=(--holdings-date "$REQUESTED_HOLDINGS_DATE"); fi
+            if [[ -n "$VPS_TRADE_DATE" ]]; then args+=(--vps-trade-date "$VPS_TRADE_DATE"); fi
           fi
           us-watchlist iwb-automation --workspace "$RUNNER_TEMP/iwb-${GITHUB_RUN_ATTEMPT}" \
             --event "$GITHUB_EVENT_NAME" --code-sha "$GITHUB_SHA" "${args[@]}"

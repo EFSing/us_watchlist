@@ -45,11 +45,17 @@
   见 [验收与恢复](IWB_AUTOMATION.md#2026-11-18-hosted-runner-验收)。
 - #9 配置纽约工作日 17:37 触发，按原运行创建日锁定目标，校验 XNYS 交易日、实际收盘和 Yahoo 目标日行情。
   日报列出目标日覆盖、120 日完整历史覆盖和各规则历史不足，逐股保留缺口。定时执行状态以仓库变量
-  `US_IWB_SCHEDULE_ENABLED` 的实际值为准。首个自然定时新采集待验收。
+  `US_IWB_SCHEDULE_ENABLED` 和 `US_IWB_VPS_SCHEDULE_ENABLED` 的实际值为准。
   [仓库变量](https://github.com/EFSing/us_watchlist/settings/variables/actions) · [运行手册](IWB_AUTOMATION.md#首次定时验收)
 - #10 与 #11 已合并。2026-11-19 日报通过手动运行生成并归档，邮件步骤成功，Bark 失败分支按预期跳过。
   B 匹配 CDW、DLTR、SIRI、VIK，B 数值通过及两组 C 匹配均为 0。该运行提供邮件工作流成功证据，收件端与 Bark
   实际送达需各自的验收证据。[Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44698935120)
+- 2026-11-20 的自然定时在北京时间 11-21 11:24 创建，比计划晚 4 小时 47 分钟。
+  首轮采集发布 `PARTIAL_COVERAGE`，目标日 1,019／1,020，120 日完整历史 995 只，B／C 匹配 6／0／0。
+  日报和诊断 ZIP 已按 Actions digest 核对，HTML 通过 `iwb-verify`，邮件步骤成功。
+  [Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44860940918)
+- VPS 接入由仓库变量切换，使用同一自动校验和归档发布组。上线状态以 VPS timer、变量回读及首次真实运行收据为准。
+  [VPS 部署与回滚](IWB_AUTOMATION.md#vps-定时触发)
 
 ## B+C 结构、量能和参考计划
 
@@ -74,7 +80,7 @@
 
 ## 后续需决定
 
-1. 完成首次自然定时验收，并按周导出、按月封存研究证据。
+1. 核对新调度入口上线并取得实际运行收据，按周导出、按月封存研究证据。
 2. 原始行情和成份证据的长期访问及保存权限。审阅版使用 10 个自然日的 IWB 持仓滞后上限。
 3. 美股点时行情、拆股价格和量能的来源及长期留档。B 数值移植需审阅，正式 US 资格、市场口径及成本收益仍需独立验证。
 4. 如后续要扩展生产时段或 IBKR 模拟执行，另行决定具体会话、成交、成本和部署口径。

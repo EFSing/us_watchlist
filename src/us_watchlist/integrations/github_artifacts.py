@@ -66,13 +66,13 @@ class GitHubArtifacts:
             sleep(delay)
         raise AssertionError("GitHub request exhausted its retry loop")
 
-    def schedule_created_at(self, code_sha: str) -> datetime:
+    def schedule_created_at(self, code_sha: str, *, event: str = "schedule") -> datetime:
         run_id = int(os.environ["GITHUB_RUN_ID"])
         if run_id <= 0:
             raise ValueError("GITHUB_INVALID_RUN_ID")
         run = json.loads(self._read(f"{self.actions_root}/runs/{run_id}"))
         if (run["id"], run["event"], run["head_branch"], run["head_sha"]) != (
-            run_id, "schedule", self.branch, code_sha,
+            run_id, event, self.branch, code_sha,
         ):
             raise ValueError("GITHUB_SCHEDULE_RUN_MISMATCH")
         created = datetime.fromisoformat(run["created_at"])
