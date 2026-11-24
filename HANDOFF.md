@@ -19,6 +19,14 @@
 | [#10](https://github.com/EFSing/us_watchlist/pull/10) | `a5a470f918247b57133870a160d1f5a5eb9846cd` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44695960917) |
 | [#11](https://github.com/EFSing/us_watchlist/pull/11) | `2381431379ac477e25e958ad826453f34b1d5a71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44698052180) |
 | [#12](https://github.com/EFSing/us_watchlist/pull/12) | `a6374739fc5fa8a0743b0ef4cb1cf2fc50c15ee3` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44707934071) |
+| [#13](https://github.com/EFSing/us_watchlist/pull/13) | `e575783bc49296880891d3786dc6b9c64352ff71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44710011716) |
+
+## 2026-11-24 调度核对
+
+`PROJECT_GOVERNANCE_STATE_CONFLICT` 已核对。旧交接停在 #12 且保留首次自然定时待验收的记录。
+GitHub 确认 #13 已合并、对应 push CI 成功，11-20 的[自然运行](https://github.com/EFSing/us_watchlist/actions/runs/44860940918)
+已有新采集、日报归档及邮件成功证据。核验版归档在 `.runtime/data/iwb-validation/2026-11-20-hosted-44860940918/`。
+VPS 接管后，以仓库变量、timer 状态和真实运行收据核对启用状态。见 [VPS 切换](docs/IWB_AUTOMATION.md#vps-定时触发)。
 
 ## 2026-11-20 接手与模拟研究审阅
 
@@ -44,7 +52,7 @@ Draft，GitHub 确认它们已合并且对应 CI 成功。旧审阅状态保留�
 #9 将纽约工作日 17:37 的 B+C 研究日报配置纳入 `main`。核对 `main` CI 和工作流后，按本轮授权设置
 `US_IWB_SCHEDULE_ENABLED=true`。每次恢复以 [仓库 Actions 变量](https://github.com/EFSing/us_watchlist/settings/variables/actions)
 的实际值和 [日报工作流状态](https://github.com/EFSing/us_watchlist/actions/workflows/iwb-daily.yml) 为准。
-首个 XNYS 交易日的自然 `schedule` 新采集待验收，记录实际时间、覆盖、逐股异常、研究结果和归档 SHA-256。
+启用时要求首个 XNYS 交易日的自然 `schedule` 留存实际时间、覆盖、逐股异常、研究结果和归档 SHA-256。
 每周在 7 天诊断到期前导出证据，每月封存并抽样复验，长期位置须经批准。
 见 [首次定时验收](docs/IWB_AUTOMATION.md#首次定时验收)及[长期证据](docs/IWB_AUTOMATION.md#长期前瞻研究证据)。
 

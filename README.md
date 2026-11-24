@@ -58,7 +58,7 @@ HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用
 `us-watchlist iwb-refresh` 下载并冻结官方 IWB 版本。`us-watchlist iwb-report --trade-date YYYY-MM-DD --output <目录>` 从可用本地版本出发，采集 Yahoo 常规会话行情并生成单文件报告。输入格式、数据门槛与真实验证见 [IWB 日报](docs/IWB_DAILY.md)。
 
 Actions 手动补跑、定时验收、短期归档和跨设备校验见 [IWB 日报自动化](docs/IWB_AUTOMATION.md)。
-定时执行由 `US_IWB_SCHEDULE_ENABLED` 控制，默认关闭。
+原生定时由 `US_IWB_SCHEDULE_ENABLED` 控制。设置 `US_IWB_VPS_SCHEDULE_ENABLED=true` 时由 VPS 接管定时触发。
 
 ## IWB 研究模拟持仓
 

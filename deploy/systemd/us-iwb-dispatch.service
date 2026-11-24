@@ -1,0 +1,12 @@
+[Unit]
+Description=Dispatch the US IWB close report on GitHub Actions
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+DynamicUser=yes
+NoNewPrivileges=yes
+LoadCredential=github-token:/etc/us-iwb-dispatch/github-token
+ExecStart=/usr/bin/python3 /usr/local/lib/us-iwb-dispatch/github_dispatch.py
+TimeoutStartSec=30s

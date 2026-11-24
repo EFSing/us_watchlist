@@ -15,6 +15,7 @@ from us_watchlist.app.iwb_automation import DAILY_PREFIX, POOL_PREFIX, _manual_t
 from us_watchlist.app.iwb_daily import HISTORY_SESSIONS, REPORT_FILES, observe_iwb, verify_completed
 from us_watchlist.app.iwb_paper import replay_iwb
 from us_watchlist.integrations.github_artifacts import Artifact, GitHubArtifacts
+from us_watchlist.integrations.github_dispatch import WORKFLOW, dispatch
 from us_watchlist.integrations.iwb_holdings import refresh_holdings
 from us_watchlist.integrations.paper_archive import read_report_records
 from us_watchlist.integrations.xnys import regular_windows
@@ -66,8 +67,57 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(state["status"], "SKIPPED_XNYS_CLOSED")
         self.assertEqual(state["trade_date"], "2025-11-27")
         self.assertNotIn("report_name", outputs)
-        archive.schedule_created_at.assert_called_once_with("a" * 40)
+        archive.schedule_created_at.assert_called_once_with("a" * 40, event="schedule")
         archive.catalog.assert_not_called()
+
+    def test_vps_dispatch_keeps_the_intended_date_and_checks_holidays_and_close(self):
+        created = datetime(2025, 11, 28, 22, 37, tzinfo=UTC)
+        holiday = datetime(2025, 11, 27, 22, 37, tzinfo=UTC)
+        early = datetime(2025, 11, 28, 18, 20, tzinfo=UTC)
+        for expected, received, now, target in (
+            ("observed", created, created, TARGET),
+            ("SKIPPED_XNYS_CLOSED", holiday, holiday, holiday.date()),
+            ("SKIPPED_NOT_READY", early, early, TARGET),
+            ("SKIPPED_SCHEDULE_EXPIRED", created, created, holiday.date()),
+            ("SKIPPED_SCHEDULE_EXPIRED", created, datetime(2025, 11, 29, 5, tzinfo=UTC), TARGET),
+        ):
+            archive = Mock(spec=GitHubArtifacts)
+            archive.schedule_created_at.return_value = received
+            with (
+                self.subTest(expected=expected, received=received, now=now),
+                patch("us_watchlist.app.iwb_automation.datetime", wraps=datetime) as clock,
+                patch("us_watchlist.app.iwb_automation._execute", return_value="observed") as execute,
+            ):
+                clock.now.return_value = now
+                workspace = self.root / f"vps-{received.date()}-{now.hour}-{target}-{expected}"
+                state, outputs = automate_iwb(workspace, archive, "a" * 40, scheduled=False, vps_trade_date=target)
+                self.assertEqual(state["trigger"], "vps_schedule")
+                self.assertEqual(state["status"], expected)
+                self.assertEqual(outputs["target"], target.isoformat())
+                self.assertNotIn("email_report_dir", outputs)
+                archive.schedule_created_at.assert_called_once_with("a" * 40, event="workflow_dispatch")
+                if expected == "observed":
+                    self.assertEqual(execute.call_args.args[2], target)
+                    self.assertTrue(execute.call_args.kwargs["scheduled"])
+                else:
+                    execute.assert_not_called()
+
+    def test_vps_dispatch_posts_the_scheduled_date_once_and_returns_the_run_id(self):
+        with patch("us_watchlist.integrations.github_dispatch.urlopen", return_value=BytesIO(
+            b'{"workflow_run_id": 42}',
+        )) as send:
+            self.assertEqual(dispatch("test-token", TARGET.isoformat()), 42)
+            send.assert_called_once()
+        request = send.call_args.args[0]
+        self.assertEqual(request.full_url, f"{WORKFLOW}/dispatches")
+        self.assertEqual(request.get_method(), "POST")
+        self.assertEqual(json.loads(request.data), {"ref": "main", "inputs": {"vps_trade_date": TARGET.isoformat()}})
+        self.assertIn("Authorization", request.unredirected_hdrs)
+        self.assertNotIn("Authorization", request.headers)
+        with patch("us_watchlist.integrations.github_dispatch.urlopen", side_effect=TimeoutError) as send:
+            with self.assertRaisesRegex(ValueError, "IWB_VPS_DISPATCH_UNCONFIRMED TimeoutError"):
+                dispatch("test-token", TARGET.isoformat())
+            send.assert_called_once()
 
     def test_schedule_uses_original_github_run_creation_time(self):
         env = {"GITHUB_REPOSITORY": "example/example", "IWB_DEFAULT_BRANCH": "main", "GH_TOKEN": "unused",
@@ -85,6 +135,8 @@ class AutomationTests(unittest.TestCase):
             with patch.object(archive, "_read", return_value=json.dumps(row).encode()):
                 with self.assertRaisesRegex(ValueError, "GITHUB_SCHEDULE_RUN_MISMATCH"):
                     archive.schedule_created_at("a" * 40)
+                self.assertEqual(archive.schedule_created_at("a" * 40, event="workflow_dispatch"),
+                                 datetime(2025, 11, 28, 22, 37, 5, tzinfo=UTC))
 
     def test_download_retries_recent_unavailable_artifact_without_exposing_token(self):
         env = {"GITHUB_REPOSITORY": "example/example", "IWB_DEFAULT_BRANCH": "main", "GH_TOKEN": "test-token"}
@@ -238,20 +290,23 @@ class AutomationTests(unittest.TestCase):
         self.assertEqual(outputs["email_report_dir"], str(self.root / "rerun" / "restored"))
         observe.assert_not_called()
         scheduled_at = datetime(2025, 11, 28, 22, 37, tzinfo=UTC)
-        with (
-            patch("us_watchlist.app.iwb_automation.datetime", wraps=datetime) as clock,
-            patch.object(archive, "schedule_created_at", return_value=scheduled_at),
-            patch.object(archive, "_read", side_effect=(json.dumps({"artifacts": [row]}).encode(), body.getvalue())),
-            patch("us_watchlist.app.iwb_automation.observe_iwb") as observe,
-        ):
-            clock.now.return_value = datetime(2025, 11, 29, 1, tzinfo=UTC)
-            state, outputs = automate_iwb(self.root / "scheduled-rerun", archive, "b" * 40, scheduled=True)
-        self.assertEqual(state["status"], "REUSED_PUBLISHED_REPORT")
-        self.assertEqual(state["existing_report"]["report_sha256"], run["report_sha256"])
-        self.assertNotIn("report_name", outputs)
-        self.assertEqual(outputs["email_report_dir"], str(self.root / "scheduled-rerun" / "restored"))
-        observe.assert_not_called()
-        restored = Path(outputs["email_report_dir"])
+        for trigger, scheduled, vps_trade_date in (("schedule", True, None), ("vps_schedule", False, TARGET)):
+            with (
+                self.subTest(trigger=trigger),
+                patch("us_watchlist.app.iwb_automation.datetime", wraps=datetime) as clock,
+                patch.object(archive, "schedule_created_at", return_value=scheduled_at),
+                patch.object(archive, "_read", side_effect=(json.dumps({"artifacts": [row]}).encode(), body.getvalue())),
+                patch("us_watchlist.app.iwb_automation.observe_iwb") as observe,
+            ):
+                clock.now.return_value = datetime(2025, 11, 29, 1, tzinfo=UTC)
+                state, outputs = automate_iwb(self.root / trigger, archive, "b" * 40, scheduled=scheduled,
+                                              vps_trade_date=vps_trade_date)
+                self.assertEqual(state["status"], "REUSED_PUBLISHED_REPORT")
+                self.assertEqual(state["existing_report"]["report_sha256"], run["report_sha256"])
+                self.assertNotIn("report_name", outputs)
+                self.assertNotIn("email_report_dir", outputs)
+                observe.assert_not_called()
+        restored = self.root / "vps_schedule" / "restored"
         original_hashes = {name: sha256((restored / name).read_bytes()).hexdigest() for name in REPORT_FILES}
         with (
             patch("us_watchlist.integrations.yahoo_chart._fetch") as network,

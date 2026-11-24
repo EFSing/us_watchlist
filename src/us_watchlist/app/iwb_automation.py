@@ -22,12 +22,17 @@ SCHEDULE_SETTLEMENT_MINUTES = 30
 SCHEDULE_LOCAL_TIME = time(17, 37)
 
 
-def _scheduled_target(now: datetime, created: datetime, state: dict) -> tuple[date, str | None]:
+def _scheduled_target(
+    now: datetime, created: datetime, state: dict, dispatched_date: date | None = None,
+) -> tuple[date, str | None]:
     if created > now:
         raise ValueError("IWB_SCHEDULE_CREATED_IN_FUTURE")
-    day = new_york_date(created)
+    created_date = new_york_date(created)
+    day = dispatched_date or created_date
     due = new_york_wall_time(day, SCHEDULE_LOCAL_TIME).astimezone(UTC)
     state.update({"run_created_at": created.isoformat(), "scheduled_for_utc": due.isoformat()})
+    if created_date != day:
+        return day, "SKIPPED_SCHEDULE_EXPIRED"
     if not is_session(day):
         return day, "SKIPPED_XNYS_CLOSED"
     session, = regular_windows(day, 1)
@@ -102,7 +107,8 @@ def _execute(
         if holdings_date is not None and previous["holdings_date"] != holdings_date.isoformat():
             raise ValueError("IWB_PUBLISHED_REPORT_USES_ANOTHER_VERSION")
         state["existing_report"] = {"run_id": existing.run_id, "report_sha256": previous["report_sha256"]}
-        outputs["email_report_dir"] = str(restored)
+        if not scheduled:
+            outputs["email_report_dir"] = str(restored)
         return "REUSED_PUBLISHED_REPORT"
 
     pool = workspace / "pool"
@@ -136,27 +142,34 @@ def _execute(
 
 def automate_iwb(
     workspace: Path, archive: GitHubArtifacts, code_sha: str, *, scheduled: bool,
-    trade_date: date | None = None, holdings_date: date | None = None,
+    trade_date: date | None = None, holdings_date: date | None = None, vps_trade_date: date | None = None,
 ) -> tuple[dict, dict[str, str]]:
     now = datetime.now(UTC)
+    trigger = "schedule" if scheduled else "workflow_dispatch"
+    if vps_trade_date is not None:
+        trigger = "vps_schedule"
+    automatic = scheduled or vps_trade_date is not None
     state = {"schema": "us_iwb_actions_attempt_v1", "started_at": now.isoformat(), "code_sha": code_sha,
-             "trigger": "schedule" if scheduled else "workflow_dispatch", "attempts": []}
+             "trigger": trigger, "attempts": []}
     diagnostic = workspace / "workflow.json"
     outputs = {"diagnostic_receipt": str(diagnostic)}
     try:
         if not re.fullmatch(r"[0-9a-f]{40}", code_sha):
             raise ValueError("IWB_INVALID_CODE_SHA")
-        if scheduled:
+        if automatic:
             if trade_date is not None or holdings_date is not None:
                 raise ValueError("IWB_SCHEDULE_DISALLOWS_MANUAL_DATES")
-            day, skip = _scheduled_target(now, archive.schedule_created_at(code_sha), state)
+            if scheduled and vps_trade_date is not None:
+                raise ValueError("IWB_NATIVE_SCHEDULE_DISALLOWS_VPS_DATE")
+            created = archive.schedule_created_at(code_sha, event="workflow_dispatch" if vps_trade_date else "schedule")
+            day, skip = _scheduled_target(now, created, state, vps_trade_date)
         else:
             day, skip = _manual_target(now, trade_date), None
         state["trade_date"] = day.isoformat()
         outputs["target"] = day.isoformat()
         state["status"] = skip or _execute(
             archive, workspace, day, holdings_date, day == completed_session(now), code_sha, state, outputs,
-            scheduled=scheduled,
+            scheduled=automatic,
         )
     except (OSError, KeyError, TypeError, ValueError, ArithmeticError) as error:
         state["status"] = "FAILED"
