@@ -21,6 +21,12 @@
 | [#12](https://github.com/EFSing/us_watchlist/pull/12) | `a6374739fc5fa8a0743b0ef4cb1cf2fc50c15ee3` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44707934071) |
 | [#13](https://github.com/EFSing/us_watchlist/pull/13) | `e575783bc49296880891d3786dc6b9c64352ff71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44710011716) |
 
+## 2026-11-24 VPS 认证迁移
+
+审阅分支 `codex/iwb-vps-github-app` 为美股 VPS 调度增加 GitHub App 认证。现行 timer 已启用，
+认证方式以 VPS 服务配置和只读检查为准。11-23 已由 VPS 触发并完成 [日报及邮件](https://github.com/EFSing/us_watchlist/actions/runs/45318327898)。
+部署和切换流程见 [运行手册](docs/IWB_AUTOMATION.md#vps-定时触发)。
+
 ## 2026-11-24 调度核对
 
 `PROJECT_GOVERNANCE_STATE_CONFLICT` 已核对。旧交接停在 #12 且保留首次自然定时待验收的记录。

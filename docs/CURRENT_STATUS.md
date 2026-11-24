@@ -56,6 +56,7 @@
   [Actions 运行](https://github.com/EFSing/us_watchlist/actions/runs/44860940918)
 - VPS 接入由仓库变量切换，使用同一自动校验和归档发布组。上线状态以 VPS timer、变量回读及首次真实运行收据为准。
   [VPS 部署与回滚](IWB_AUTOMATION.md#vps-定时触发)
+- VPS 触发器支持仅限美股仓库的 GitHub App 认证。认证切换以 VPS 服务配置和安装令牌检查为准。
 
 ## B+C 结构、量能和参考计划
 
