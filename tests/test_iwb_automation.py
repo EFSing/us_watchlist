@@ -1,3 +1,4 @@
+import base64
 import json
 import unittest
 from datetime import UTC, date, datetime
@@ -15,7 +16,7 @@ from us_watchlist.app.iwb_automation import DAILY_PREFIX, POOL_PREFIX, _manual_t
 from us_watchlist.app.iwb_daily import HISTORY_SESSIONS, REPORT_FILES, observe_iwb, verify_completed
 from us_watchlist.app.iwb_paper import replay_iwb
 from us_watchlist.integrations.github_artifacts import Artifact, GitHubArtifacts
-from us_watchlist.integrations.github_dispatch import WORKFLOW, dispatch
+from us_watchlist.integrations.github_dispatch import API, WORKFLOW, dispatch, installation_token, main as dispatch_main
 from us_watchlist.integrations.iwb_holdings import refresh_holdings
 from us_watchlist.integrations.paper_archive import read_report_records
 from us_watchlist.integrations.xnys import regular_windows
@@ -118,6 +119,52 @@ class AutomationTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "IWB_VPS_DISPATCH_UNCONFIRMED TimeoutError"):
                 dispatch("test-token", TARGET.isoformat())
             send.assert_called_once()
+
+    def test_vps_github_app_requests_only_the_us_workflow_permission(self):
+        now = datetime(2025, 11, 28, 22, 37, tzinfo=UTC)
+        issuer, installation = "123", "456"
+        token = "test-installation-token" * 24
+        with (
+            patch("us_watchlist.integrations.github_dispatch.subprocess.run", return_value=Mock(stdout=b"signature")) as sign,
+            patch("us_watchlist.integrations.github_dispatch.urlopen", return_value=BytesIO(
+                json.dumps({"token": token}).encode(),
+            )) as send,
+        ):
+            key = self.root / "github-app-key"
+            self.assertEqual(installation_token(key, issuer, installation, now), token)
+        self.assertEqual(sign.call_args.args[0][-1], str(key))
+        request = send.call_args.args[0]
+        self.assertEqual(request.full_url, f"{API}/app/installations/{installation}/access_tokens")
+        self.assertEqual(json.loads(request.data), {
+            "repositories": ["us_watchlist"], "permissions": {"actions": "write"},
+        })
+        self.assertNotIn("Authorization", request.headers)
+        bearer = request.unredirected_hdrs["Authorization"]
+        header, payload, signature = bearer.removeprefix("Bearer ").split(".")
+        self.assertEqual(json.loads(base64.urlsafe_b64decode(header + "=="))["alg"], "RS256")
+        claims = json.loads(base64.urlsafe_b64decode(payload + "=="))
+        self.assertEqual(claims, {"iss": issuer, "iat": int(now.timestamp()) - 60, "exp": int(now.timestamp()) + 180})
+        self.assertEqual(base64.urlsafe_b64decode(signature + "=="), b"signature")
+
+    def test_vps_github_app_check_does_not_dispatch(self):
+        environment = {
+            "CREDENTIALS_DIRECTORY": str(self.root),
+            "IWB_GITHUB_APP_ID": "123",
+            "IWB_GITHUB_INSTALLATION_ID": "456",
+        }
+        with (
+            patch.dict("os.environ", environment),
+            patch("us_watchlist.integrations.github_dispatch.installation_token", return_value="test-token"),
+            patch("us_watchlist.integrations.github_dispatch.urlopen", return_value=BytesIO(
+                b'{"state": "active"}',
+            )) as send,
+            patch("builtins.print") as receipt,
+        ):
+            dispatch_main(["--check"])
+        send.assert_called_once()
+        self.assertEqual(send.call_args.args[0].full_url, WORKFLOW)
+        self.assertEqual(send.call_args.args[0].get_method(), "GET")
+        receipt.assert_called_once_with("IWB_VPS_GITHUB_APP_AUTH_OK")
 
     def test_schedule_uses_original_github_run_creation_time(self):
         env = {"GITHUB_REPOSITORY": "example/example", "IWB_DEFAULT_BRANCH": "main", "GH_TOKEN": "unused",

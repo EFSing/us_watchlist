@@ -54,12 +54,30 @@ VPS 使用 systemd 在纽约工作日 17:37 调用 GitHub API，向 `main` 发�
 
 部署使用审阅过的文件。将 [触发脚本](../src/us_watchlist/integrations/github_dispatch.py) 安装至
 `/usr/local/lib/us-iwb-dispatch/github_dispatch.py`，将 [服务](../deploy/systemd/us-iwb-dispatch.service) 和
-[定时器](../deploy/systemd/us-iwb-dispatch.timer) 安装至 `/etc/systemd/system/`。创建只含本仓库
-`Actions: write` 权限的细粒度令牌，以 root 所有、权限 `0600` 写入
-`/etc/us-iwb-dispatch/github-token`，并在到期前轮换。服务通过 systemd 的 `LoadCredential` 读取。
+[定时器](../deploy/systemd/us-iwb-dispatch.timer) 安装至 `/etc/systemd/system/`。VPS 需要
+Python 3.10+、系统时区数据和 `/usr/bin/openssl`。
+
+注册只安装到 `EFSing/us_watchlist` 的私有 GitHub App，授予 `Actions: write`。在
+`/etc/us-iwb-dispatch/github-app.env` 设置 `IWB_GITHUB_APP_ID` 和 `IWB_GITHUB_INSTALLATION_ID`。
+将 App 私钥以 root 所有、权限 `0600` 保存到 `/etc/us-iwb-dispatch/github-app.pem`。
+服务通过 systemd 的 `LoadCredential` 读取私钥，每次调用向 GitHub 申请仅限本仓库的安装令牌。
 [GitHub 触发权限](https://docs.github.com/en/rest/actions/workflows#create-a-workflow-dispatch-event)
 
-切换顺序如下。
+上线前从 VPS 验证认证和工作流状态。
+
+```sh
+systemd-run --wait --pipe --collect \
+  -p DynamicUser=yes -p NoNewPrivileges=yes \
+  -p EnvironmentFile=/etc/us-iwb-dispatch/github-app.env \
+  -p LoadCredential=github-app-key:/etc/us-iwb-dispatch/github-app.pem \
+  /usr/bin/python3 /usr/local/lib/us-iwb-dispatch/github_dispatch.py --check
+```
+
+已有 VPS 调度时，先在临时路径验证新脚本和私钥。选在日报时段之外，备份旧服务和脚本，
+停 timer 后替换两个文件，校验服务并重新启用 timer。遇到失败时恢复旧服务和脚本并回读定时。
+轮换私钥时，先生成新私钥并通过同一检查，再以原权限替换凭证文件。确认运行通过后撤销旧 App 私钥。
+
+首次启用 VPS 的顺序如下。
 
 1. 执行 `systemctl daemon-reload`，用 `systemd-analyze verify` 检查单元。保持定时器关闭，
    先用服务发起一次验证请求。留存日志中的运行链接，确认 VPS 开关关闭时作业跳过。

@@ -143,3 +143,9 @@ GitHub 原生定时的创建时间曾比计划晚 4 小时 47 分钟。采用现
 继续由 GitHub-hosted runner 执行日报。VPS 提交纽约会话日期，Actions 核对同日原始创建时间，沿用定时采集资格。
 定时复用已发布归档时跳过邮件，手动补发仍可用。切换及回滚由单个仓库变量选择调度来源。
 [调度和部署](IWB_AUTOMATION.md#vps-定时触发)
+
+## 2026-11-24 · VPS 调度采用 GitHub App 认证
+
+为避免个人访问令牌到期中断定时，使用仅安装到美股仓库的私有 GitHub App。VPS 用本机私钥签名，
+每次触发时向 GitHub 申请该仓库的 Actions 安装令牌。调度启用和私钥轮换步骤见
+[VPS 定时触发](IWB_AUTOMATION.md#vps-定时触发)。
