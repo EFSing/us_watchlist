@@ -20,6 +20,17 @@
 | [#11](https://github.com/EFSing/us_watchlist/pull/11) | `2381431379ac477e25e958ad826453f34b1d5a71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44698052180) |
 | [#12](https://github.com/EFSing/us_watchlist/pull/12) | `a6374739fc5fa8a0743b0ef4cb1cf2fc50c15ee3` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44707934071) |
 | [#13](https://github.com/EFSing/us_watchlist/pull/13) | `e575783bc49296880891d3786dc6b9c64352ff71` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/44710011716) |
+| [#14](https://github.com/EFSing/us_watchlist/pull/14) | `850064f41fc74f8fbee7e9ea230a90f970990e81` | [成功](https://github.com/EFSing/us_watchlist/actions/runs/45317211563) |
+
+## 2026-11-24 VPS 切换
+
+GitHub 已回读 `US_IWB_VPS_SCHEDULE_ENABLED=true`，VPS 的 `us-iwb-dispatch.timer` 已启用。
+[VPS 验证请求](https://github.com/EFSing/us_watchlist/actions/runs/45318183266) 核对了开关关闭时的跳过路径。
+切换后人工启动同一 VPS 服务，执行 [11-23 真实日报](https://github.com/EFSing/us_watchlist/actions/runs/45318327898)，
+收据为 `trigger=vps_schedule`，日报归档和邮件步骤成功。
+日报、官方成份和诊断归档已恢复核验至 `.runtime/data/iwb-validation/2026-11-23-vps-45318327898/`。
+下一次自动触发为北京时间 11-25 06:37。首次自然 VPS 定时以运行收据为准。
+令牌北京时间 2027-02-22 00:00 到期，提前轮换。见 [部署及回滚](docs/IWB_AUTOMATION.md#vps-定时触发)。
 
 ## 2026-11-24 调度核对
 
