@@ -16,6 +16,7 @@ from us_watchlist.reporting.iwb_email import render_email_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = date(2026, 11, 18)
+RETIRED = "us_c_trend_pullback_conservative_b_v1"
 SMTP = {
     "SMTP_HOST": "smtp.gmail.com", "SMTP_PORT": "587", "SMTP_USERNAME": "example@gmail.com",
     "SMTP_PASSWORD": "application-password", "SMTP_FROM": "example@gmail.com",
@@ -27,12 +28,19 @@ RUN = {
     "strategies": {
         "us_breakout_retest_shape_v1": {"matches": 31},
         "us_c_trend_pullback_balanced_a_v1": {"matches": 3},
-        "us_c_trend_pullback_conservative_b_v1": {"matches": 0},
     },
 }
 
 
 class MailTests(unittest.TestCase):
+    def test_two_rule_and_historical_three_rule_receipts_have_the_same_summary(self):
+        legacy = {**RUN, "strategies": {**RUN["strategies"], RETIRED: {"matches": 1}}}
+        current = render_email_summary(RUN)
+        self.assertEqual(render_email_summary(legacy), current)
+        for part in current[1:]:
+            self.assertIn("C 均衡", part)
+            self.assertNotIn("C 保守", part)
+
     def test_chinese_summary_and_exact_html_attachment(self):
         report_html = "<!doctype html><html lang='zh'><body>参考止损与量能</body></html>"
         with patch("us_watchlist.integrations.smtp_mail.smtplib.SMTP") as smtp:

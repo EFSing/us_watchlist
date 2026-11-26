@@ -211,10 +211,13 @@ def _candidates(
                 symbols = f'<a href="#{rule.version}">查看规则 · {len(rule.matches)} 只</a>' + symbols
         groups.append(f'<div class="candidate-group"><h3>{label}</h3><div class="ticker-list">{symbols}</div></div>')
     c_note = ""
-    if c_rules:
+    if len(c_rules) == 1:
+        rule, = c_rules
+        c_note = f" C {rule.label.removeprefix('C · ')}匹配 {len(rule.matches):,} 只。"
+    elif c_rules:
         if any(len(rule.others) != rule.reasons["INCOMPLETE_HISTORY"] or rule.matches for rule in c_rules):
             unique = {row.symbol for rule in c_rules for row in rule.matches}
-            c_note = f" C 两套规则合计 {len(unique):,} 只（按代码去重）。"
+            c_note = f" C {len(c_rules)} 套规则合计 {len(unique):,} 只（按代码去重）。"
         else:
             c_note = " C 暂无可用的规则结果。"
     focus_note = "" if has_research else '\n<p class="callout"><strong>重点观察</strong> · 暂无经过审查的优选规则。</p>'

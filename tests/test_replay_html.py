@@ -22,7 +22,7 @@ class ChineseReplayTests(unittest.TestCase):
         cls.evidence = replace(evidence, mode="iwb_yahoo_observation", iwb=IwbReportEvidence(
             (("HOLX", "IWB_UNLISTED_OR_NO_MARKET"),), 6, 10, 4, "PARTIAL_COVERAGE",
         ))
-        b, c = evaluate_joint(inputs)
+        b, (balanced,) = evaluate_joint(inputs)
         matched = next(row for row in b.evaluations if row.signal is not None)
         cls.decimal = Decimal("99.123456789123456789")
         cls.ratio = 2.123456789123
@@ -33,19 +33,19 @@ class ChineseReplayTests(unittest.TestCase):
             volume=(("Breakout volume / prior 20d mean", cls.ratio),
                     ("Retest mean volume / breakout", "Zero breakout volume")),
         )
-        c_zero = replace(c[1], evaluations=tuple(
+        c_zero = replace(balanced, evaluations=tuple(
             replace(row, reason="REBOUND_NOT_CONFIRMED", signal=None) if row.signal else row
-            for row in c[1].evaluations
+            for row in balanced.evaluations
         ))
         cls.b = replace(b, evaluations=tuple(detailed if row is matched else row for row in b.evaluations))
-        cls.c = (c[0], c_zero)
+        cls.c = (c_zero,)
         cls.html = render_joint_replay(cls.evidence, cls.b, cls.c)
         cls.main, cls.audit = cls.html.split('<details id="audit" class="panel fold">', 1)
 
     def test_chinese_labels_and_precision_keep_symbols_and_versions(self):
         for label in (
             'lang="zh-CN"', "美股收盘日报", "当日行情覆盖", "部分覆盖", "历史点时与拆股量能未验证",
-            "研究效果未验证", "今日候选", "暂无经过审查的优选规则", "C · 均衡规则", "C · 保守规则",
+            "研究效果未验证", "今日候选", "暂无经过审查的优选规则", "C · 均衡规则", "C 均衡规则匹配 0 只。",
             '0 只</strong><small>研究规则匹配', "本轮没有匹配的股票",
             "DEMOA", self.b.strategy.version, "$99.12", "102.35%", "2.12 倍",
             "回踩位置达标</dt><dd>是", "收盘转强条件达标</dt><dd>否", "突破日成交量为零",

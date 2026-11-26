@@ -5,7 +5,6 @@ from html import escape
 _RULES = (
     ("us_breakout_retest_shape_v1", "B 突破回踩"),
     ("us_c_trend_pullback_balanced_a_v1", "C 均衡"),
-    ("us_c_trend_pullback_conservative_b_v1", "C 保守"),
 )
 
 

@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from us_watchlist.app.iwb_daily import verify_completed
-from us_watchlist.domain.paper import BASIS, B_VERSION, STRATEGIES, cohort, seed_sessions
+from us_watchlist.domain.paper import BASIS, B_VERSION, STRATEGIES, STRATEGY_LABELS, cohort, seed_sessions
 from us_watchlist.domain.replay_research import UNCONFIRMED, VOLUME_FIELDS
 from us_watchlist.integrations.iwb_holdings import read_holdings
 from us_watchlist.integrations.local_artifacts import read_artifact
@@ -78,6 +78,11 @@ def _structure_origin(row: dict, evaluation: dict, signal_date: str) -> dict | N
 
 
 def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positions=False) -> tuple[list[dict], dict]:
+    versions = run["strategies"].keys()
+    if (not STRATEGIES.keys() <= versions <= STRATEGY_LABELS.keys()
+            or versions != records.keys() - {"record-input", "record-research"}):
+        raise ValueError("PAPER_SCREENING_STRATEGY_SET_MISMATCH")
+    archived_versions = tuple(version for version in STRATEGY_LABELS if version in versions)
     research = records["record-research"]
     identity = (run["trade_date"], run["observed_at"], run["input_sha256"], "iwb_yahoo_observation")
     keys = ("trade_date", "cutoff", "manifest_sha256", "mode")
@@ -85,7 +90,7 @@ def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positi
         raise ValueError("PAPER_RESEARCH_IDENTITY_MISMATCH")
     grid = {}
     matches = set()
-    for version in STRATEGIES:
+    for version in archived_versions:
         strategy = records[version]
         rows = strategy["evaluations"]
         if (tuple(strategy[key] for key in keys) != identity or strategy["version"] != version
@@ -105,7 +110,7 @@ def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positi
         grid[version][symbol] = row["structure"]["stage"]
     evaluations = {
         (version, evaluation["symbol"]): evaluation
-        for version in STRATEGIES for evaluation in records[version]["evaluations"] if evaluation["matched"]
+        for version in archived_versions for evaluation in records[version]["evaluations"] if evaluation["matched"]
     } if with_positions else {}
     output = []
     for key, row in sorted(candidates.items()):

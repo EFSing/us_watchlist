@@ -11,22 +11,26 @@ from unittest.mock import patch
 
 from us_watchlist.app.iwb_paper import run_study
 from us_watchlist.app.paper_inputs import _screening, _structure_origin, load_day
-from us_watchlist.domain.paper import BASIS, B_VERSION, POSITION_PROTOCOL, STRATEGIES, Mode, Status, check_policy
+from us_watchlist.domain.paper import (
+    BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, RETIRED_STRATEGIES, STRATEGIES, Mode, Status, check_policy,
+)
 from us_watchlist.domain.replay_research import VOLUME_FIELDS
 from us_watchlist.integrations.paper_archive import read_report_records
 from us_watchlist.integrations.xnys import next_session, regular_windows
+from us_watchlist.reporting.paper_html import render_paper
+from us_watchlist.tracking.paper import summarize
 from us_watchlist.tracking.paper_position import PositionIndicators
 
 START = date(2026, 1, 5)
 T1 = date(2026, 1, 6)
 T2 = date(2026, 1, 7)
 T3 = date(2026, 1, 8)
-_, BALANCED, CONSERVATIVE = list(STRATEGIES)
+_, BALANCED = STRATEGIES
+CONSERVATIVE, = RETIRED_STRATEGIES
 RULE = {"min_actual_rr": "2", "min_target_upside": "0.05", "max_open_premium": "0.08", "exit_model": "FIXED_STOP"}
 POLICY = {
     B_VERSION: {"B_NUMERIC_QUALIFIED:UNKNOWN": RULE},
     BALANCED: {"C_PRICE_RESEARCH:CLEAR": RULE},
-    CONSERVATIVE: {"C_PRICE_RESEARCH:CLEAR": {**RULE, "min_target_upside": "0.18"}},
 }
 SIGNAL_BAR = ("100", "104", "96", "101")
 
@@ -68,11 +72,13 @@ def evidence(day, candidates=(), *, bars=None, prior=None):
 
 
 def demo_days():
+    narrow_target = candidate("INDI", BALANCED, warning="CLEAR")
+    narrow_target["levels"].update(target="108", rr="1.6")
     first = evidence(START, (
         candidate("ALFA"), candidate("BRAV", BALANCED, warning="CLEAR"),
         candidate("CHAR", BALANCED, warning="WARNING"), candidate("DELT", rejected=True),
         candidate("ECHO"), candidate("FOXT"), candidate("GOLF"), candidate("HOTL"),
-        candidate("INDI", CONSERVATIVE, warning="CLEAR"), candidate("JULI"),
+        narrow_target, candidate("JULI"),
     ))
     second = evidence(T1, bars={
         "ALFA": ("100", "114", "98", "105"), "BRAV": ("101", "113", "98", "107"),
@@ -98,6 +104,18 @@ def run_day(root, day, *, policy=POLICY, **options):
         root, Mode.SYNTHETIC, START, date.fromisoformat(day["trade_date"]), policy,
         evidence_loader=load, **options,
     )
+
+
+def screening_archive(day, versions):
+    fields = {"trade_date": str(day), "cutoff": f"{day}T22:00:00+00:00", "manifest_sha256": "test-sha",
+              "mode": "iwb_yahoo_observation"}
+    run = {"trade_date": str(day), "observed_at": fields["cutoff"], "input_sha256": fields["manifest_sha256"],
+           "strategies": {version: {"matches": 0} for version in versions}}
+    records = {version: {**fields, "schema": "us_offline_screening_v1", "version": version, "error": None,
+                         "evaluations": [{"symbol": "ALFA", "matched": False, "reason": "NO_MATCH"}]}
+               for version in versions}
+    records["record-research"] = {**fields, "price_basis": BASIS, "candidates": []}
+    return run, records
 
 
 def position_policy(**model):
@@ -380,6 +398,7 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(rows["BRAV"]["status"], Status.OPEN)
         self.assertIn("当前模拟持仓 1 只", (output / "paper-report.html").read_text(encoding="utf-8"))
         b_stat, c_stat, *_ = t2["performance"]
+        self.assertNotIn(CONSERVATIVE, {row["group"] for row in t2["performance"]})
         self.assertEqual((b_stat["win_rate"], b_stat[Status.CLOSED], b_stat["mean_r"]), (0, 1, -1))
         self.assertEqual((c_stat[Status.OPEN], c_stat["total_r"]), (1, 0))
         _, t3 = run_day(self.root, fourth)
@@ -493,6 +512,61 @@ class PaperTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "PAPER_UNKNOWN_POLICY_COHORT"):
             check_policy({B_VERSION: {"C_PRICE_RESEARCH:CLEAR": RULE}})
 
+    def test_new_policy_rejects_retired_c_rule(self):
+        position_rule = position_policy()[B_VERSION]["B_NUMERIC_QUALIFIED:UNKNOWN"]
+        for protocol, rule in ((PROTOCOL, RULE), (POSITION_PROTOCOL, position_rule)):
+            with self.subTest(protocol=protocol):
+                check_policy({BALANCED: {"C_PRICE_RESEARCH:CLEAR": rule}}, protocol)
+                with self.assertRaisesRegex(ValueError, "PAPER_UNKNOWN_POLICY_STRATEGY"):
+                    check_policy({CONSERVATIVE: {"C_PRICE_RESEARCH:CLEAR": rule}}, protocol)
+
+    def test_ledger_advances_from_three_rule_archive_to_two_rule_archive(self):
+        def from_archive(day, versions, matched=None):
+            run, records = screening_archive(day, versions)
+            if matched:
+                run["strategies"][matched]["matches"] = 1
+                records[matched]["evaluations"][0]["matched"] = True
+                archived = candidate("ALFA", matched, warning="CLEAR")
+                records["record-research"]["candidates"].append({
+                    **archived, "trade": {"qualification": archived["qualification"], "plan": archived["levels"],
+                                          "qualification_reason": None, "missing_reason": None,
+                                          "inputs": [("stop_risk_warning", False)]},
+                    "volume": {"measures": archived["volume"]},
+                })
+            scripts = []
+            for key, value in records.items():
+                attribute = "id" if key == "record-research" else "data-strategy"
+                scripts.append(f'<script type="application/json" {attribute}="{key}">{json.dumps(value)}</script>')
+            body = "".join(scripts).encode()
+            plans, grid = _screening(run, read_report_records(body, sha256(body).hexdigest()), ("ALFA",))
+            data = evidence(day, plans, bars={"ALFA": SIGNAL_BAR})
+            data["quotes"]["ALFA"]["structures"] = {version: rows["ALFA"] for version, rows in grid.items()}
+            return data
+
+        first = from_archive(START, (*STRATEGIES, CONSERVATIVE), CONSERVATIVE)
+        second = from_archive(T1, STRATEGIES, BALANCED)
+        self.assertEqual(set(first["quotes"]["ALFA"]["structures"]), {*STRATEGIES, CONSERVATIVE})
+        self.assertEqual(second["quotes"]["ALFA"]["structures"].keys(), STRATEGIES.keys())
+        _, initial = run_day(self.root, first, initialize=True, policy={})
+        output, advanced = run_day(self.root, second, policy={}, expect_previous=initial["ledger_sha256"])
+        _, restored = run_study(self.root, Mode.SYNTHETIC, START, T1, {})
+        self.assertEqual(restored, advanced)
+        self.assertEqual({row["plan"]["strategy_version"]: row["status"] for row in advanced["records"].values()},
+                         {CONSERVATIVE: Status.UNAVAILABLE, BALANCED: Status.PENDING})
+        retired_stat = next(row for row in advanced["performance"] if row["group"] == CONSERVATIVE)
+        self.assertEqual(retired_stat[Status.UNAVAILABLE], 1)
+        self.assertIn("<th scope='row'>C 保守</th>", (output / "paper-report.html").read_text(encoding="utf-8"))
+
+    def test_restore_reuses_byte_identical_legacy_view_with_empty_retired_row(self):
+        output, view = run_day(self.root, evidence(START), initialize=True, policy={})
+        legacy = {**view, "performance": summarize(view["records"], include_empty_retired=True)}
+        old_bytes = render_paper(legacy, company_labels=False).encode("utf-8")
+        path = output / "paper-report.html"
+        self.assertNotIn("C 保守", path.read_text(encoding="utf-8"))
+        path.write_bytes(old_bytes)
+        self.assertEqual(run_study(self.root, Mode.SYNTHETIC, START, START, {})[1], view)
+        self.assertEqual(path.read_bytes(), old_bytes)
+
     def test_archive_hash_and_duplicate_records_are_rejected(self):
         html = f'<script type="application/json" data-strategy="{B_VERSION}">{{}}</script>'.encode()
         with self.assertRaisesRegex(ValueError, "PAPER_REPORT_SHA_MISMATCH"):
@@ -505,14 +579,7 @@ class PaperTests(unittest.TestCase):
         self.assertFalse(list(self.root.iterdir()))
 
     def test_screening_and_reference_records_must_agree(self):
-        fields = {"trade_date": str(START), "cutoff": f"{START}T22:00:00+00:00", "manifest_sha256": "test-sha",
-                  "mode": "iwb_yahoo_observation"}
-        run = {"trade_date": str(START), "observed_at": fields["cutoff"], "input_sha256": fields["manifest_sha256"],
-               "strategies": {version: {"matches": 0} for version in STRATEGIES}}
-        records = {version: {**fields, "schema": "us_offline_screening_v1", "version": version, "error": None,
-                             "evaluations": [{"symbol": "ALFA", "matched": False, "reason": "NO_MATCH"}]}
-                   for version in STRATEGIES}
-        records["record-research"] = {**fields, "price_basis": BASIS, "candidates": []}
+        run, records = screening_archive(START, STRATEGIES)
         self.assertEqual(_screening(run, records, ("ALFA",))[0], [])
         records[B_VERSION]["evaluations"][0]["matched"] = True
         with self.assertRaisesRegex(ValueError, "PAPER_SCREENING_COUNT_MISMATCH"):
@@ -520,3 +587,16 @@ class PaperTests(unittest.TestCase):
         run["strategies"][B_VERSION]["matches"] = 1
         with self.assertRaisesRegex(ValueError, "PAPER_RESEARCH_MATCH_SET_MISMATCH"):
             _screening(run, records, ("ALFA",))
+
+    def test_screening_rejects_missing_active_unknown_and_disagreeing_strategy_sets(self):
+        for receipt_versions, embedded_versions in (
+            ((B_VERSION,), (B_VERSION,)),
+            ((*STRATEGIES, "unknown"), (*STRATEGIES, "unknown")),
+            ((*STRATEGIES, CONSERVATIVE), tuple(STRATEGIES)),
+            (tuple(STRATEGIES), (*STRATEGIES, CONSERVATIVE)),
+        ):
+            with self.subTest(receipt=receipt_versions, embedded=embedded_versions):
+                run, _ = screening_archive(START, receipt_versions)
+                _, records = screening_archive(START, embedded_versions)
+                with self.assertRaisesRegex(ValueError, "PAPER_SCREENING_STRATEGY_SET_MISMATCH"):
+                    _screening(run, records, ("ALFA",))

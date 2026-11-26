@@ -4,10 +4,10 @@ from decimal import Decimal
 from html import escape
 
 from us_watchlist.domain.company_catalog import catalog_sector_style, company_name
-from us_watchlist.domain.paper import POSITION_PROTOCOL, STRATEGIES, Mode, Status
+from us_watchlist.domain.paper import POSITION_PROTOCOL, STRATEGY_LABELS, Mode, Status
 
 _LABELS = {
-    **STRATEGIES, Status.PENDING: "待开盘检查", Status.NOT_FILLED: "未成交",
+    **STRATEGY_LABELS, Status.PENDING: "待开盘检查", Status.NOT_FILLED: "未成交",
     Status.OPEN: "模拟持仓", Status.CLOSED: "已退出", Status.UNAVAILABLE: "无法确认",
     "B_NUMERIC_QUALIFIED": "B 数值门槛通过", "B_NUMERIC_REJECTED": "B 数值门槛未通过",
     "B_NUMERIC_UNAVAILABLE": "B 数值门槛缺证",

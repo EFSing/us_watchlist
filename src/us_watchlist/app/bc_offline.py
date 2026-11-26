@@ -15,14 +15,14 @@ from us_watchlist.research.pullback import compare_b_volume
 from us_watchlist.research.replay_observations import REFERENCE_COMMIT, VERSION, observe_candidate
 from us_watchlist.research.workbench import project_workbench
 from us_watchlist.strategies.b_breakout_retest import BreakoutRetestShape
-from us_watchlist.strategies.c_trend_pullback import BALANCED_A, CONSERVATIVE_B, TrendPullback
+from us_watchlist.strategies.c_trend_pullback import BALANCED_A, TrendPullback
 from us_watchlist.strategies.contracts import StrategyInput
 
 
 def evaluate_joint(inputs: StrategyInput) -> tuple[ScreeningResult, tuple[ScreeningResult, ...]]:
     return (
         evaluate(BreakoutRetestShape(), inputs),
-        tuple(evaluate(TrendPullback(rule), inputs) for rule in (BALANCED_A, CONSERVATIVE_B)),
+        (evaluate(TrendPullback(BALANCED_A), inputs),),
     )
 
 

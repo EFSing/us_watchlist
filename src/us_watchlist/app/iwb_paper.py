@@ -58,18 +58,21 @@ def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
 
 
 def _publish_paper_view(path: Path, view: dict, daily: bytes | None) -> None:
-    def render(*, company_labels: bool) -> bytes:
+    def render(projection: dict, *, company_labels: bool) -> bytes:
         if daily is not None:
-            return render_combined_paper(daily, view, company_labels=company_labels)
-        return render_paper(view, company_labels=company_labels).encode("utf-8")
+            return render_combined_paper(daily, projection, company_labels=company_labels)
+        return render_paper(projection, company_labels=company_labels).encode("utf-8")
 
-    body = render(company_labels=True)
+    body = render(view, company_labels=True)
     try:
         publish_once(path, body)
     except ValueError:
-        # Previously published views keep their bytes if the only change is the company label.
-        if read_artifact(path) != render(company_labels=False):
-            raise
+        # Accept exact bytes from before company labels or the retirement of empty performance rows.
+        existing = read_artifact(path)
+        if existing != render(view, company_labels=False):
+            legacy = {**view, "performance": summarize(view["records"], include_empty_retired=True)}
+            if existing not in (render(legacy, company_labels=True), render(legacy, company_labels=False)):
+                raise
 
 
 def run_study(

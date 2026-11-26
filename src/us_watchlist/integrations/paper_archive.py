@@ -5,7 +5,7 @@ from hashlib import sha256
 from html.parser import HTMLParser
 
 from us_watchlist.domain.models import MarketSnapshot
-from us_watchlist.domain.paper import STRATEGIES
+from us_watchlist.domain.paper import STRATEGIES, STRATEGY_LABELS
 
 
 class _Records(HTMLParser):
@@ -20,7 +20,7 @@ class _Records(HTMLParser):
         if tag != "script" or attrs.get("type") != "application/json":
             return
         identity = attrs.get("data-strategy", attrs.get("id"))
-        if identity in STRATEGIES or identity == "record-research":
+        if "data-strategy" in attrs or identity in STRATEGY_LABELS or identity in {"record-input", "record-research"}:
             if identity in self.records:
                 raise ValueError(f"PAPER_DUPLICATE_REPORT_RECORD {identity}")
             self.current = identity
@@ -42,7 +42,7 @@ def read_report_records(body: bytes, report_sha256: str) -> dict:
     parser = _Records()
     parser.feed(body.decode("utf-8"))
     parser.close()
-    if set(parser.records) != STRATEGIES.keys() | {"record-research"}:
+    if not (STRATEGIES.keys() | {"record-research"}) <= parser.records.keys():
         raise ValueError("PAPER_MISSING_REPORT_RECORD")
     return parser.records
 

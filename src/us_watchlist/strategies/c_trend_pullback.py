@@ -1,4 +1,4 @@
-"""US C price-structure research, from the two frozen CN C daily rules."""
+"""US C price-structure research derived from the frozen CN C daily rules."""
 
 from dataclasses import dataclass
 from math import log
@@ -29,9 +29,6 @@ class PullbackRule:
 
 BALANCED_A = PullbackRule(
     "BALANCED_A", 60, 0.55, 2, 3, 20, (0.03, 0.12), 0.01, (0.02, 0.08), 0.01,
-)
-CONSERVATIVE_B = PullbackRule(
-    "CONSERVATIVE_B", 90, 0.60, 3, 4, 25, (0.04, 0.15), 0.015, (0.02, 0.10), 0.015,
 )
 
 

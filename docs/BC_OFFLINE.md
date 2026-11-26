@@ -4,17 +4,18 @@
 `us-watchlist bc-offline --config .runtime/data/replay.toml`。Yahoo 采集和 Candidate 归档见
 [共用输入说明](B_OFFLINE.md)。
 
-日报在 `.runtime/artifacts/bc-offline/<mode>/`。一个 HTML 内含 B、C 两套规则的名单、
+日报在 `.runtime/artifacts/bc-offline/<mode>/`。一个 HTML 内含 B 突破回踩与 C 均衡的名单、
 逐股结构、量能、未匹配原因和资料缺口，并附各版本独立 JSON 研究记录。
-相同报告内容复用原路径。B 或任一 C 规则抛出异常时，该分区显示实际异常和 `FAILED`，
+相同报告内容复用原路径。任一活跃规则抛出异常时，该分区显示实际异常和 `FAILED`，
 其他分区照常展示。共同输入完整性校验失败时整轮拒绝。
 
 ## C 规则
 
 规则来源为 A 股主线 `85abb04acb86e3396f635218e7087c00a0d8339a` 的
 C 入场结构与已运行的研究日报。A 股 C 日报使用价格结构匹配，量能为观察字段。
-US C 以经核验的 US Candidate 作为起始集合，分别按自己的历史覆盖和规则判断。
-收盘判定沿用 C 的价格结构，两套参数按原值迁移，收益与 CN 交易制度不进入 US 验证。
+US C 以经核验的股票池为起始集合，沿用 C 的收盘价格结构。收益与 CN 交易制度不进入 US 验证。
+自 Draft PR #18 的规则退役变更起，新生成的联合日报只评估 C 均衡。
+C 保守保留以下历史参数、原始归档和回放标签，退役规则的归档兼容见 [研究模拟持仓](IWB_PAPER.md)。
 [C 规则实现](https://github.com/EFSing/ashare_watchlist/blob/85abb04acb86e3396f635218e7087c00a0d8339a/scripts/c_pre_outcome_design.py#L61) ·
 [C 日报投影](https://github.com/EFSing/ashare_watchlist/blob/85abb04acb86e3396f635218e7087c00a0d8339a/scripts/c_daily_watchlist.py) ·
 [A 股 C 研究模拟](https://github.com/EFSing/ashare_watchlist/pull/115)
@@ -25,7 +26,7 @@ US C 以经核验的 US Candidate 作为起始集合，分别按自己的历史�
 | `us_c_trend_pullback_conservative_b_v1` | 90 | 60% | 3／4 | 25 | 4%–15% | 2%–10% | 1.5%／1.5% |
 
 - 趋势要求收盘高于 MA20、MA20 高于慢线、对数收盘斜率为正且满足上涨收盘比例。
-  规则分别要求最后 60 或 90 个连续会话，使用同一输入中可连续取得的历史前缀。
+  C 均衡要求最后 60 个连续会话。历史 C 保守要求 90 个会话。
 - 只用 T−1 及以前确认枢轴，按原顺序寻找两处递高低点、回踩前高和已确认的反弹高点。
   沿用原回踩时长计算（回踩参数加两倍枢轴半径）。T 收盘须高于反弹高、前收和当日开盘，
   且收盘位置至少为日内区间的 60%。支撑区间来自两个低点，收盘跌破其下沿使支撑失效，
@@ -34,7 +35,7 @@ US C 以经核验的 US Candidate 作为起始集合，分别按自己的历史�
   涨跌日各至少两天才计算其比值。C 以价格结构生成候选，量能只记录。本轮未采用 A 股的
   主板和 ST 筛选、执行模拟或结算规则。
 
-## 真实股票池和 Yahoo 观察
+## 历史验收快照 · 真实股票池和 Yahoo 观察
 
 两个相邻交易日各自使用上游原始归档，两份均为 `PARTIAL`，均有 1,021 条 IWB 审计和
 1,020 条 IWB 活跃证券。Yahoo 对发布名单的每只股票都返回了行情，分别用 120 个 XNYS

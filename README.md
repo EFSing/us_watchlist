@@ -46,7 +46,7 @@ HTML 输出在 `.runtime/artifacts/b-offline/synthetic/`。实际股票池使用
 
 ## B+C 联合日报
 
-运行 `us-watchlist bc-offline` 生成合成单文件日报。B 与两套 C 规则分别验证
+运行 `us-watchlist bc-offline` 生成合成单文件日报。B 突破回踩与 C 均衡分别验证
 共同数据中的历史覆盖和结构。打开 `.runtime/artifacts/bc-offline/synthetic/` 下的 HTML
 查看候选与逐股诊断。实际输入、C 规则与观察结果见 [B+C 离线日报](docs/BC_OFFLINE.md)。
 

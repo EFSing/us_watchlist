@@ -7,10 +7,12 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
-from us_watchlist.app.bc_offline import run_bc_offline
+from us_watchlist.app.bc_offline import evaluate_joint, run_bc_offline
 from us_watchlist.app.replay import prepare_replay
+from us_watchlist.domain.paper import RETIRED_STRATEGIES
+from us_watchlist.reporting.replay_html import render_joint_replay
 from us_watchlist.strategies.b_breakout_retest import BreakoutRetestShape
-from us_watchlist.strategies.c_trend_pullback import BALANCED_A, CONSERVATIVE_B, TrendPullback
+from us_watchlist.strategies.c_trend_pullback import BALANCED_A, TrendPullback
 
 ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "configs" / "b_demo" / "replay.toml"
@@ -25,7 +27,7 @@ def embedded_records(html: str) -> dict:
 class JointOfflineTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        _, cls.inputs = prepare_replay(CONFIG)
+        cls.evidence, cls.inputs = prepare_replay(CONFIG)
         cls.temp = ROOT / ".runtime" / "tmp"
         cls.temp.mkdir(parents=True, exist_ok=True)
 
@@ -36,19 +38,30 @@ class JointOfflineTests(unittest.TestCase):
             self.assertEqual(run_bc_offline(CONFIG, artifacts), path)
             html = path.read_text(encoding="utf-8")
             results = embedded_records(html)
-            self.assertEqual(len(results), 3)
-            for version, expected_signal in (
-                (BreakoutRetestShape.version.version, "DEMOA"),
-                (TrendPullback(BALANCED_A).version.version, "DEMOB"),
-                (TrendPullback(CONSERVATIVE_B).version.version, "DEMOB"),
-            ):
+            expected = {
+                BreakoutRetestShape.version.version: "DEMOA",
+                TrendPullback(BALANCED_A).version.version: "DEMOB",
+            }
+            b, c = evaluate_joint(self.inputs)
+            self.assertEqual([result.strategy.version for result in (b, *c)], list(expected))
+            self.assertEqual(results.keys(), expected.keys())
+            for version, expected_signal in expected.items():
                 with self.subTest(version=version):
                     self.assertIn(f'href="#{version}"', html)
                     rows = results[version]["evaluations"]
                     self.assertEqual([row["symbol"] for row in rows], ["DEMOA", "DEMOB", "DEMOC", "DEMOD"])
                     self.assertEqual([row["symbol"] for row in rows if row["matched"]], [expected_signal])
                     self.assertIn("missing session", rows[2]["data_gap"])
-            self.assertIn("C 两套规则合计 1 只（按代码去重）", html)
+            self.assertIn("C 均衡规则匹配 1 只。", html)
+            self.assertIn("<summary>C · 均衡规则 · 1 只匹配</summary>", html)
+            self.assertNotIn("C · 保守规则", html)
+
+    def test_historical_result_keeps_its_rule_label_and_deduplicated_count(self):
+        b, (balanced,) = evaluate_joint(self.inputs)
+        retired = replace(balanced, strategy=replace(balanced.strategy, version=next(iter(RETIRED_STRATEGIES))))
+        html = render_joint_replay(self.evidence, b, (balanced, retired))
+        self.assertIn("C · 保守规则", html)
+        self.assertIn("C 2 套规则合计 1 只（按代码去重）。", html)
 
     def test_failed_strategy_remains_visible_and_other_strategy_still_reports_matches(self):
         for failing, valid in ((BreakoutRetestShape, TrendPullback(BALANCED_A)),
@@ -93,7 +106,8 @@ class JointOfflineTests(unittest.TestCase):
     def test_short_and_long_c_rules_keep_distinct_history_eligibility(self):
         inputs = replace(self.inputs, eligible_symbols=("DEMOB",), history=self.inputs.history[-76:])
         self.assertIsNotNone(TrendPullback(BALANCED_A).evaluate(inputs)[0].signal)
-        row = TrendPullback(CONSERVATIVE_B).evaluate(inputs)[0]
+        long_window = replace(BALANCED_A, name="TEST_LONG_WINDOW", trend_window=90)
+        row = TrendPullback(long_window).evaluate(inputs)[0]
         self.assertEqual(row.reason, "INCOMPLETE_HISTORY")
         self.assertEqual(row.sessions_available, 76)
         self.assertIn("Only 76 of 90", row.data_gap)

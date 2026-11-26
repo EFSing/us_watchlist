@@ -5,7 +5,9 @@ from datetime import datetime
 from decimal import Decimal
 from hashlib import sha256
 
-from us_watchlist.domain.paper import B_VERSION, POSITION_PROTOCOL, PROTOCOL, STRATEGIES, Status, cohort, needs_structure
+from us_watchlist.domain.paper import (
+    B_VERSION, POSITION_PROTOCOL, PROTOCOL, RETIRED_STRATEGIES, STRATEGIES, Status, cohort, needs_structure,
+)
 from us_watchlist.tracking.paper_position import PositionIndicators, close_position
 
 # From the reference Paper Tracking position replay. Prices from today's
@@ -221,8 +223,10 @@ def apply_day(records: dict, day: dict, study_id: str, policy: dict, protocol: s
             _event(row, day, Status.PENDING, "PLAN_CREATED")
 
 
-def summarize(records: dict) -> list[dict]:
+def summarize(records: dict, *, include_empty_retired: bool = False) -> list[dict]:
     groups = {version: [] for version in STRATEGIES}
+    planned = {row["plan"]["strategy_version"] for row in records.values()}
+    groups.update({version: [] for version in RETIRED_STRATEGIES if include_empty_retired or version in planned})
     groups.update({name: [] for name in (
         "B_NUMERIC_QUALIFIED", "B_NUMERIC_REJECTED", "B_NUMERIC_UNAVAILABLE", "WARNING", "CLEAR", "UNKNOWN",
     )})
