@@ -5,6 +5,7 @@ import json
 import re
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from io import BytesIO, StringIO
 from pathlib import Path
@@ -119,7 +120,15 @@ def parse_holdings(raw: bytes, provenance: Provenance) -> HoldingsVersion:
             raise ValueError(f"IWB_UNKNOWN_EQUITY_EXCHANGE {symbol} {exchange}")
         if symbol in members:
             raise ValueError(f"IWB_DUPLICATE_SYMBOL {symbol}")
-        members[symbol] = UniverseMember(symbol, not reason)
+        weight = re.sub(r"[,\s]+", "", entry.get("Market Weight", ""))
+        try:
+            market_weight = Decimal(weight) if weight not in {"", "-"} else None
+        except InvalidOperation as error:
+            raise ValueError(f"IWB_INVALID_MARKET_WEIGHT {symbol}") from error
+        members[symbol] = UniverseMember(
+            symbol, not reason, " ".join(entry.get("Name", "").split()),
+            " ".join(entry.get("Sector", "").split()), market_weight,
+        )
         if reason:
             inactive[symbol] = reason
 

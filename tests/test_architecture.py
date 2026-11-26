@@ -17,7 +17,7 @@ LAYERS = {
 PURE_IMPORTS = {
     "__future__", "abc", "collections", "dataclasses", "datetime", "decimal",
     "enum", "functools", "hashlib", "html", "itertools", "json", "math", "operator",
-    "re", "statistics", "typing",
+    "re", "statistics", "types.MappingProxyType", "typing",
 }
 INDIRECT_CALLS = {"__import__", "compile", "eval", "exec"}
 PATH_IO = {"open", "read_bytes", "read_text", "write_bytes", "write_text", "mkdir", "unlink"}
@@ -68,7 +68,7 @@ class ArchitectureTests(unittest.TestCase):
                 self.assertNotIn(root, {"importlib", "builtins"}, f"{name} -> {target}")
                 if root != PACKAGE:
                     if layer != "integrations":
-                        self.assertIn(root, allowed_external, f"{name} -> {target}")
+                        self.assertTrue(root in allowed_external or target in allowed_external, f"{name} -> {target}")
                     continue
                 target_layer = remainder.split(".")[0]
                 self.assertIn(target_layer, LAYERS[layer] | {layer}, f"{name} -> {target}")

@@ -2,6 +2,7 @@
 
 from decimal import Decimal, InvalidOperation
 from enum import StrEnum
+from types import MappingProxyType
 
 from us_watchlist.domain.models import PriceBasis
 
@@ -10,8 +11,11 @@ POSITION_PROTOCOL = "us_iwb_paper_position_v2"
 STRATEGIES = {
     "us_breakout_retest_shape_v1": "B 突破回踩",
     "us_c_trend_pullback_balanced_a_v1": "C 均衡",
+}
+RETIRED_STRATEGIES = {
     "us_c_trend_pullback_conservative_b_v1": "C 保守",
 }
+STRATEGY_LABELS = MappingProxyType(STRATEGIES | RETIRED_STRATEGIES)
 B_VERSION = next(iter(STRATEGIES))
 BASIS = PriceBasis.YAHOO_CHART_QUOTE
 

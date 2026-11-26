@@ -57,6 +57,24 @@ def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
     return report
 
 
+def _publish_paper_view(path: Path, view: dict, daily: bytes | None) -> None:
+    def render(projection: dict, *, company_labels: bool) -> bytes:
+        if daily is not None:
+            return render_combined_paper(daily, projection, company_labels=company_labels)
+        return render_paper(projection, company_labels=company_labels).encode("utf-8")
+
+    body = render(view, company_labels=True)
+    try:
+        publish_once(path, body)
+    except ValueError:
+        # Accept exact bytes from before company labels or the retirement of empty performance rows.
+        existing = read_artifact(path)
+        if existing != render(view, company_labels=False):
+            legacy = {**view, "performance": summarize(view["records"], include_empty_retired=True)}
+            if existing not in (render(legacy, company_labels=True), render(legacy, company_labels=False)):
+                raise
+
+
 def run_study(
     root: Path, mode: Mode, start: date, target: date, policy: dict, *,
     evidence_loader=None, initialize: bool = False, expect_previous: str | None = None, protocol: str = PROTOCOL,
@@ -114,10 +132,8 @@ def run_study(
         row.pop("_indicators", None)
     view = {"study": study, "trade_date": str(target), "ledger_sha256": digest,
             "source": evidence["source"], "records": records, "performance": summarize(records)}
-    if daily is not None:
-        publish_once(output / "report.html", render_combined_paper(daily, view))
-    else:
-        publish_once(output / "paper-report.html", render_paper(view).encode("utf-8"))
+    _publish_paper_view(output / ("report.html" if daily is not None else "paper-report.html"), view, daily)
+    if daily is None:
         publish_once(output / "paper-email.txt", paper_mail_text(view).encode("utf-8"))
     return output, view
 

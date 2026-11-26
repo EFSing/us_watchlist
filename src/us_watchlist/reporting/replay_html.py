@@ -7,12 +7,14 @@ from html import escape
 
 from us_watchlist.domain.replay_research import CandidateResearch, ReplayResearch
 from us_watchlist.domain.screening import Evaluation, Metrics, ReplayEvidence, ScreeningResult
-from us_watchlist.reporting.replay_assets import RESEARCH_STYLE, SCRIPT, STYLE
+from us_watchlist.domain.workbench import QuoteSummary, Workbench
+from us_watchlist.reporting.replay_assets import RESEARCH_STYLE, SCRIPT, STYLE, WORKBENCH_STYLE
 from us_watchlist.reporting.replay_labels import REASON, STATUS, data_gap, metric_cells
-from us_watchlist.reporting.research_html import candidate_research, research_definitions, research_summary
+from us_watchlist.reporting.research_html import candidate_research, research_definitions, research_summary, workbench_research
+from us_watchlist.reporting.workbench_html import B_VERSION, b_sections, market_pulse, quote_heading
 
 
-_B = "us_breakout_retest_shape_v1"
+_B = B_VERSION
 _RULES = {
     _B: (
         "B · 76 日突破回踩形态", "形态匹配",
@@ -117,7 +119,10 @@ def _pill(label: str, *, warning: bool = False) -> str:
     return f'<span class="pill{tone}">{label}</span>'
 
 
-def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, research: ReplayResearch | None) -> str:
+def _overview(
+    evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, research: ReplayResearch | None,
+    workbench: Workbench | None,
+) -> str:
     if iwb := evidence.iwb:
         coverage = (
             ("IWB 权益基池", f"{evidence.seed_size:,} 只"),
@@ -138,16 +143,26 @@ def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, res
         ))
         lead = "上游候选股票池覆盖"
         status = STATUS.get(evidence.candidate_status, "见审计记录")
-    cards = []
-    for rule in rules:
-        if rule.status in {"FAILED", "DATA_UNAVAILABLE", "NO_CANDIDATES_IN_UNIVERSE"}:
-            count, note = "—", STATUS[rule.status]
-        else:
-            count = f"{len(rule.matches):,} 只"
-            note = f"历史不足 {rule.reasons['INCOMPLETE_HISTORY']:,} 只"
-        cards.append(f'<a href="#{rule.version}"><span>{rule.label}</span>'
-                     f'<strong>{count}</strong><small>{rule.match_label} · {note}</small></a>')
-    study = research_summary(research, _B) + "\n" if research is not None else ""
+    if workbench is not None:
+        c_rules = rules[1:]
+        c_count = len({row.symbol for rule in c_rules for row in rule.matches})
+        if c_rules and all(rule.status in {"FAILED", "DATA_UNAVAILABLE", "NO_CANDIDATES_IN_UNIVERSE"} for rule in c_rules):
+            c_count = "—"
+        sections = market_pulse(workbench, c_count, b_failed=rules[0].result.error is not None)
+        study = ""
+        risk += " 参考计划供次交易日起观察，未计费用、滑点和成交。"
+    else:
+        cards = []
+        for rule in rules:
+            if rule.status in {"FAILED", "DATA_UNAVAILABLE", "NO_CANDIDATES_IN_UNIVERSE"}:
+                count, note = "—", STATUS[rule.status]
+            else:
+                count = f"{len(rule.matches):,} 只"
+                note = f"历史不足 {rule.reasons['INCOMPLETE_HISTORY']:,} 只"
+            cards.append(f'<a href="#{rule.version}"><span>{rule.label}</span>'
+                         f'<strong>{count}</strong><small>{rule.match_label} · {note}</small></a>')
+        sections = f'<div class="decision-grid" style="--rule-count:{len(rules)}">{"".join(cards)}</div>'
+        study = research_summary(research, _B) + "\n" if research is not None else ""
     return f"""<section id="overview" class="panel">
 <div class="section-head"><h2>今日总览</h2>{_pill(f"数据状态 · {status}", warning=status != "完成")}</div>
 {study}<div class="overview-grid">
@@ -155,7 +170,7 @@ def _overview(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, res
   <p class="note">持仓日期 {evidence.seed_date} · 使用美股常规交易时段日线</p></div>
   <dl class="overview-facts">{facts}</dl>
 </div>
-<div class="decision-grid" style="--rule-count:{len(rules)}">{"".join(cards)}</div>
+{sections}
 <div class="callout warning"><strong>研究效果未验证</strong><p>{risk}</p></div>
 </section>"""
 
@@ -172,24 +187,43 @@ def _risk(evidence: ReplayEvidence) -> tuple[str, str]:
     return "本页使用合成样本检验流程。", "股票池与行情均为合成输入。"
 
 
-def _candidates(rules: tuple[_Rule, ...], c_rules: tuple[_Rule, ...], *, has_research: bool) -> str:
+def _candidates(
+    rules: tuple[_Rule, ...], c_rules: tuple[_Rule, ...], *, has_research: bool, workbench: Workbench | None,
+) -> str:
     groups = []
+    if workbench is not None:
+        core = "".join(
+            f'<a href="#{_B}-{escape(row.quote.symbol)}">{escape(row.quote.symbol)} '
+            f'<small>{escape(row.quote.name)} · {row.quote.sector}</small></a>' for row in workbench.core
+        ) or '<span class="muted">本轮无核心精选</span>'
+        groups.append(f'<div class="candidate-group"><h3>今日核心精选</h3><div class="ticker-list">{core}</div></div>')
     for rule in rules:
         symbols = "".join(
             f'<a href="#{rule.version}-{escape(row.symbol)}">{escape(row.symbol)}</a>'
             for row in rule.matches
         ) or f'<span class="muted">{STATUS[rule.status] if rule.status != "PARTIAL_COVERAGE" else "本轮无匹配"}</span>'
-        groups.append(f'<div class="candidate-group"><h3>{rule.label}</h3><div class="ticker-list">{symbols}</div></div>')
+        label = rule.label
+        if workbench is not None:
+            if rule.version == _B:
+                label = "B 全部形态匹配"
+            else:
+                label = "C 研究匹配 · " + rule.label.removeprefix("C · ")
+                symbols = f'<a href="#{rule.version}">查看规则 · {len(rule.matches)} 只</a>' + symbols
+        groups.append(f'<div class="candidate-group"><h3>{label}</h3><div class="ticker-list">{symbols}</div></div>')
     c_note = ""
-    if c_rules:
+    if len(c_rules) == 1:
+        rule, = c_rules
+        c_note = f" C {rule.label.removeprefix('C · ')}匹配 {len(rule.matches):,} 只。"
+    elif c_rules:
         if any(len(rule.others) != rule.reasons["INCOMPLETE_HISTORY"] or rule.matches for rule in c_rules):
             unique = {row.symbol for rule in c_rules for row in rule.matches}
-            c_note = f" C 两套规则合计 {len(unique):,} 只（按代码去重）。"
+            c_note = f" C {len(c_rules)} 套规则合计 {len(unique):,} 只（按代码去重）。"
         else:
             c_note = " C 暂无可用的规则结果。"
     focus_note = "" if has_research else '\n<p class="callout"><strong>重点观察</strong> · 暂无经过审查的优选规则。</p>'
+    title = "核心精选与候选" if workbench is not None else "今日候选"
     return f"""<section id="candidates" class="panel">
-<div class="section-head"><div><h2>今日候选</h2>
+<div class="section-head"><div><h2>{title}</h2>
 <p class="section-note">按规则列出全部匹配，点击代码查看个股。{c_note}</p></div></div>
 {"".join(groups)}{focus_note}
 </section>"""
@@ -221,31 +255,40 @@ def _legacy_card_body(row: Evaluation, *, is_b: bool) -> str:
 {more}"""
 
 
-def _card(row: Evaluation, rule: _Rule, study: CandidateResearch | None) -> str:
+def _card(row: Evaluation, rule: _Rule, study: CandidateResearch | None, quote: QuoteSummary | None = None) -> str:
     is_b = rule.result.strategy.version == _B
     heading = "h3" if is_b else "h4"
     symbol = escape(row.symbol)
     if study is None:
         body = _legacy_card_body(row, is_b=is_b)
     else:
-        body = f"""{candidate_research(study, is_b=is_b)}
+        if quote is not None:
+            plan, observation = workbench_research(study, is_b=is_b)
+            body = f'<div class="workbench-card-grid">{plan}{observation}</div>'
+        else:
+            body = candidate_research(study, is_b=is_b)
+        body += f"""
 <details><summary>原始结构、补充量能与计算定义</summary>
 {research_definitions(study, is_b=is_b)}
 <dl class="metrics">{metric_cells(row.structure + row.volume)}</dl>
 </details>"""
+    header = (quote_heading(quote, heading) if quote else
+              f'<div class="watch-head"><{heading}>{symbol}</{heading}>{_pill(_reason(row.reason))}</div>')
     return f"""<article class="watch-card" id="{rule.version}-{symbol}">
-<div class="watch-head"><{heading}>{symbol}</{heading}>{_pill(_reason(row.reason))}</div>
+{header}
 {body}
 </article>"""
 
 
-def _other_results(rule: _Rule) -> str:
-    if not rule.others:
+def _other_results(rule: _Rule, *, exclude: frozenset[str] = frozenset()) -> str:
+    others = tuple(row for row in rule.others if row.symbol not in exclude)
+    if not others:
         return ""
+    reasons = Counter(row.reason for row in others)
     counts = "".join(f"<li>{_reason(code)} <strong>{count:,}</strong></li>"
-                     for code, count in sorted(rule.reasons.items(), key=lambda pair: (-pair[1], pair[0])))
+                     for code, count in sorted(reasons.items(), key=lambda pair: (-pair[1], pair[0])))
     rows = []
-    for row in rule.others:
+    for row in others:
         reason = _reason(row.reason)
         gap = data_gap(row.data_gap)
         terms = escape(f"{row.symbol} {reason} {gap}".lower())
@@ -253,7 +296,7 @@ def _other_results(rule: _Rule) -> str:
         rows.append(f'<tr data-search="{terms}"><th scope="row">{escape(row.symbol)}</th>'
                     f"<td>{reason}{gap_html}</td><td>{row.sessions_available:,}</td></tr>")
     return f"""<details class="fold other-results">
-<summary>其他未匹配股票 · {len(rule.others):,} 只</summary><div class="fold-content">
+<summary>其他未匹配股票 · {len(others):,} 只</summary><div class="fold-content">
 <ul class="reason-list" aria-label="未匹配原因汇总">{counts}</ul>
 <div class="toolbar" hidden>
 <label for="search-{rule.version}">搜索</label>
@@ -265,9 +308,12 @@ def _other_results(rule: _Rule) -> str:
 </div></details>"""
 
 
-def _rule_section(rule: _Rule, heading: str, studies: dict[tuple[str, str], CandidateResearch]) -> str:
+def _rule_section(
+    rule: _Rule, heading: str, studies: dict[tuple[str, str], CandidateResearch], quotes: dict[str, QuoteSummary] | None = None,
+) -> str:
     version = rule.result.strategy.version
-    content = "".join(_card(row, rule, studies.get((version, row.symbol))) for row in rule.matches)
+    content = "".join(_card(row, rule, studies.get((version, row.symbol)), (quotes or {}).get(row.symbol))
+                      for row in rule.matches)
     if not content:
         message = {
             "FAILED": "该规则执行失败。原始异常见审计区。",
@@ -341,41 +387,55 @@ def _audit(evidence: ReplayEvidence, rules: tuple[_Rule, ...], risk: str, resear
 
 def render_replay(
     evidence: ReplayEvidence, results: tuple[ScreeningResult, ...], *, title: str = "美股 B 形态日报",
-    summary: str = "", research: ReplayResearch | None = None,
+    summary: str = "", research: ReplayResearch | None = None, workbench: Workbench | None = None,
 ) -> str:
     rules = tuple(_Rule.from_result(result) for result in results)
     # The joint entry point supplies B first, then each independently evaluated C rule.
     c_rules = rules[1:]
     risk, audit_risk = _risk(evidence)
-    links = [("overview", "今日总览"), ("candidates", "今日候选")]
+    links = [("overview", "今日总览"), ("candidates", "核心精选与候选" if workbench else "今日候选")]
     studies = {(row.strategy_version, row.symbol): row for row in research.candidates} if research else {}
     sections = ""
     if rules:
-        links.append((rules[0].version, "B 形态"))
-        sections = f'<section class="panel">{_rule_section(rules[0], "h2", studies)}</section>'
+        links.append((rules[0].version, "B 观察台" if workbench else "B 形态"))
+        if workbench is None:
+            sections = f'<section class="panel">{_rule_section(rules[0], "h2", studies)}</section>'
+        else:
+            watch_symbols = frozenset(row.quote.symbol for row in workbench.watch)
+            diagnostics = _other_results(rules[0], exclude=watch_symbols)
+            sections = b_sections(workbench, diagnostics, failed=rules[0].result.error is not None)
     if c_rules:
         links.append(("c-results", "C 研究"))
-        sections += ('<section id="c-results" class="panel"><div class="section-head"><h2>C 研究规则</h2></div>'
-                     + "".join(_rule_section(rule, "h3", studies) for rule in c_rules) + "</section>")
+        if workbench is None:
+            c_sections = "".join(_rule_section(rule, "h3", studies) for rule in c_rules)
+        else:
+            quotes = {quote.symbol: quote for quote in workbench.c_quotes}
+            c_sections = "".join(
+                f'<details class="fold"><summary>{rule.label} · {len(rule.matches)} 只匹配</summary>'
+                f'<div class="fold-content">{_rule_section(rule, "h3", studies, quotes)}</div></details>' for rule in c_rules
+            )
+        sections += f'<section id="c-results" class="panel"><h2>C 研究规则</h2>{c_sections}</section>'
     links.append(("audit", "数据审计"))
     nav = "".join(f'<a href="#{anchor}">{label}</a>' for anchor, label in links)
+    styles = STYLE + (RESEARCH_STYLE if research or workbench else "") + (WORKBENCH_STYLE if workbench else "")
+    body_class = ' class="workbench"' if workbench else ""
     return f"""<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{escape(title)} · {evidence.trade_date}</title>
-<style>{STYLE}{RESEARCH_STYLE if research else ""}</style>
+<style>{styles}</style>
 </head>
-<body><main>
+<body{body_class}><main>
 <header class="site-header">
  <div><p class="eyebrow">美股策略复盘</p><h1>{escape(title)}</h1>
  <div class="pills">{_pill("常规交易时段")}{_pill(_MODE[evidence.mode])}</div></div>
  <p class="date">交易日 <strong>{evidence.trade_date}</strong></p>
 </header>
 <nav class="section-nav" aria-label="日报章节导航">{nav}</nav>
-{_overview(evidence, rules, risk, research)}
-{_candidates(rules, c_rules, has_research=research is not None)}
+{_overview(evidence, rules, risk, research, workbench)}
+{_candidates(rules, c_rules, has_research=research is not None, workbench=workbench)}
 {summary}
 {sections}
 {_audit(evidence, rules, audit_risk, research)}
@@ -385,7 +445,7 @@ def render_replay(
 
 def render_joint_replay(
     evidence: ReplayEvidence, b: ScreeningResult, c: tuple[ScreeningResult, ...], *,
-    research: ReplayResearch | None = None,
+    research: ReplayResearch | None = None, workbench: Workbench | None = None,
 ) -> str:
     title = "美股收盘日报 · IWB" if evidence.iwb else "美股 B+C 离线日报"
-    return render_replay(evidence, (b, *c), title=title, research=research)
+    return render_replay(evidence, (b, *c), title=title, research=research, workbench=workbench)

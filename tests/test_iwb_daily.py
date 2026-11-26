@@ -9,7 +9,9 @@ from unittest.mock import patch
 
 from us_watchlist.app.iwb_daily import observe_iwb
 from us_watchlist.domain.models import Provenance
+from us_watchlist.domain.paper import STRATEGIES
 from us_watchlist.integrations.iwb_holdings import LATEST, parse_holdings, read_holdings, refresh_holdings
+from us_watchlist.integrations.paper_archive import read_report_records
 from us_watchlist.integrations.xnys import completed_session, regular_windows
 
 TARGET = date(2025, 11, 28)
@@ -96,7 +98,11 @@ class IwbDailyTests(unittest.TestCase):
         self.assertEqual(run["target_bars"], 0)
         self.assertEqual(run["session_close_utc"], "2025-11-28T18:00:00+00:00")
         self.assertEqual(run["report_sha256"], sha256((output / "report.html").read_bytes()).hexdigest())
-        self.assertEqual(json.loads((output / "run.json").read_bytes()), run)
+        saved = json.loads((output / "run.json").read_bytes())
+        self.assertEqual(saved, run)
+        self.assertEqual(saved["strategies"].keys(), STRATEGIES.keys())
+        records = read_report_records((output / "report.html").read_bytes(), run["report_sha256"])
+        self.assertEqual(records.keys() - {"record-input", "record-research"}, STRATEGIES.keys())
         self.assertIn("研究效果未验证", (output / "report.html").read_text(encoding="utf-8"))
         with self.assertRaisesRegex(ValueError, "identity already used"):
             observe_iwb(TARGET, self.pool, output, "b" * 40)

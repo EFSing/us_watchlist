@@ -16,6 +16,7 @@ from us_watchlist.reporting.iwb_email import render_email_summary
 
 ROOT = Path(__file__).resolve().parents[1]
 TARGET = date(2026, 11, 18)
+RETIRED = "us_c_trend_pullback_conservative_b_v1"
 SMTP = {
     "SMTP_HOST": "smtp.gmail.com", "SMTP_PORT": "587", "SMTP_USERNAME": "example@gmail.com",
     "SMTP_PASSWORD": "application-password", "SMTP_FROM": "example@gmail.com",
@@ -27,12 +28,19 @@ RUN = {
     "strategies": {
         "us_breakout_retest_shape_v1": {"matches": 31},
         "us_c_trend_pullback_balanced_a_v1": {"matches": 3},
-        "us_c_trend_pullback_conservative_b_v1": {"matches": 0},
     },
 }
 
 
 class MailTests(unittest.TestCase):
+    def test_two_rule_and_historical_three_rule_receipts_have_the_same_summary(self):
+        legacy = {**RUN, "strategies": {**RUN["strategies"], RETIRED: {"matches": 1}}}
+        current = render_email_summary(RUN)
+        self.assertEqual(render_email_summary(legacy), current)
+        for part in current[1:]:
+            self.assertIn("C 均衡", part)
+            self.assertNotIn("C 保守", part)
+
     def test_chinese_summary_and_exact_html_attachment(self):
         report_html = "<!doctype html><html lang='zh'><body>参考止损与量能</body></html>"
         with patch("us_watchlist.integrations.smtp_mail.smtplib.SMTP") as smtp:
@@ -58,6 +66,17 @@ class MailTests(unittest.TestCase):
     def test_complete_status_is_not_marked_partial(self):
         subject, _, _ = render_email_summary({**RUN, "status": "SUCCESS"})
         self.assertIn("｜完成", subject)
+
+    def test_core_summary_is_read_from_the_verified_attachment(self):
+        html = ('<article data-core-symbol="AHR" data-core-name="美国医疗地产" '
+                'data-core-sector="房地产/REITs"></article>').encode("utf-8")
+        with (patch("us_watchlist.app.iwb_notifications.verify_completed", return_value=RUN),
+              patch("us_watchlist.app.iwb_notifications.read_artifact", return_value=html),
+              patch("us_watchlist.app.iwb_notifications.send_mail") as deliver):
+            send_iwb_email(Path("/fake/workbench"), TARGET)
+        for part in deliver.call_args.args[1:3]:
+            self.assertIn("AHR（美国医疗地产 · 房地产/REITs）", part)
+        self.assertEqual(deliver.call_args.args[3], html)
 
     def test_legacy_published_report_without_history_coverage_is_emailed(self):
         legacy = {key: value for key, value in RUN.items() if key != "full_history_symbols"}

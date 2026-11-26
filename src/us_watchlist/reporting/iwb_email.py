@@ -1,15 +1,14 @@
-"""Email-safe Chinese summary projected solely from the validated IWB receipt."""
+"""Email-safe Chinese summary of the verified IWB report."""
 
 from html import escape
 
 _RULES = (
     ("us_breakout_retest_shape_v1", "B 突破回踩"),
     ("us_c_trend_pullback_balanced_a_v1", "C 均衡"),
-    ("us_c_trend_pullback_conservative_b_v1", "C 保守"),
 )
 
 
-def render_email_summary(report: dict) -> tuple[str, str, str]:
+def render_email_summary(report: dict, *, core: tuple[tuple[str, str, str], ...] = ()) -> tuple[str, str, str]:
     day = report["trade_date"]
     status = "部分覆盖" if report["status"] == "PARTIAL_COVERAGE" else "完成"
     rows = [(label, report["strategies"][version]["matches"]) for version, label in _RULES]
@@ -26,6 +25,8 @@ def render_email_summary(report: dict) -> tuple[str, str, str]:
         ("120 日完整历史", history_coverage),
         *((label, f"{count} 只") for label, count in rows),
     ]
+    if core:
+        facts.append(("核心精选（含观察递补）", "、".join(f"{symbol}（{name} · {sector}）" for symbol, name, sector in core)))
     summary = "\n".join(f"{label}：{value}" for label, value in facts)
     footer = "完整候选、2→3 结构、量能、参考触发／止损／目标及 RR 见 HTML 附件。研究效果未验证，不构成交易指令。"
     plain = f"美股 IWB B+C 研究日报\n\n{summary}\n\n{footer}\n"
