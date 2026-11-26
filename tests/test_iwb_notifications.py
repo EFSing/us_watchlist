@@ -59,6 +59,17 @@ class MailTests(unittest.TestCase):
         subject, _, _ = render_email_summary({**RUN, "status": "SUCCESS"})
         self.assertIn("｜完成", subject)
 
+    def test_core_summary_is_read_from_the_verified_attachment(self):
+        html = ('<article data-core-symbol="AHR" data-core-name="美国医疗地产" '
+                'data-core-sector="房地产/REITs"></article>').encode("utf-8")
+        with (patch("us_watchlist.app.iwb_notifications.verify_completed", return_value=RUN),
+              patch("us_watchlist.app.iwb_notifications.read_artifact", return_value=html),
+              patch("us_watchlist.app.iwb_notifications.send_mail") as deliver):
+            send_iwb_email(Path("/fake/workbench"), TARGET)
+        for part in deliver.call_args.args[1:3]:
+            self.assertIn("AHR（美国医疗地产 · 房地产/REITs）", part)
+        self.assertEqual(deliver.call_args.args[3], html)
+
     def test_legacy_published_report_without_history_coverage_is_emailed(self):
         legacy = {key: value for key, value in RUN.items() if key != "full_history_symbols"}
         html = b"<!doctype html><html><body>Original archived report</body></html>"

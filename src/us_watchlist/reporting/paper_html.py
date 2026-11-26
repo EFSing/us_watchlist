@@ -3,6 +3,7 @@
 from decimal import Decimal
 from html import escape
 
+from us_watchlist.domain.company_catalog import catalog_sector_style, company_name
 from us_watchlist.domain.paper import POSITION_PROTOCOL, STRATEGIES, Mode, Status
 
 _LABELS = {
@@ -111,8 +112,14 @@ def _facts(items) -> str:
     return "<dl>" + "".join(f"<div><dt>{label}</dt><dd>{value}</dd></div>" for label, value in items) + "</dl>"
 
 
-def _name(plan: dict) -> str:
-    return f"{escape(plan['symbol'])} · {_label(plan['strategy_version'])}"
+def _name(plan: dict, *, company_labels: bool) -> str:
+    symbol = plan["symbol"]
+    company = ""
+    if company_labels:
+        sector, style = catalog_sector_style(symbol)
+        if style != "未分类":
+            company = f" · {escape(company_name(symbol))} · {sector}（{style}）"
+    return f"{escape(symbol)}{company} · {_label(plan['strategy_version'])}"
 
 
 def _qualification(plan: dict) -> str:
@@ -142,7 +149,7 @@ def _history(row: dict) -> str:
     return f"<details><summary>状态历史</summary><ul>{events}</ul></details>"
 
 
-def _position(row: dict) -> str:
+def _position(row: dict, *, company_labels: bool) -> str:
     plan, state = row["plan"], row["position"]
     warning = (f'<p class="notice">状态未更新 · {_label(row["history"][-1]["reason"])}</p>'
                if row.get("suspended_at") else "")
@@ -172,11 +179,11 @@ def _position(row: dict) -> str:
         ("最近有效估值", escape(state["priced_on"])), ("当前结构观察", _label(state["structure"])),
         ("目标里程碑", "已观察到" if state["target_seen"] else "尚未确认"),
     ))
-    return (f'<article class="card"><h3>{_name(plan)}</h3><p class="small">{_qualification(plan)}</p>'
+    return (f'<article class="card"><h3>{_name(plan, company_labels=company_labels)}</h3><p class="small">{_qualification(plan)}</p>'
             f'{facts}{warning}{_history(row)}</article>')
 
 
-def _pending(row: dict) -> str:
+def _pending(row: dict, *, company_labels: bool) -> str:
     plan = row["plan"]
     levels = plan["levels"]
     facts = _facts((
@@ -184,10 +191,11 @@ def _pending(row: dict) -> str:
         ("触发 / 止损 / 目标（USD）", " / ".join(_fmt(levels[key]) for key in ("trigger", "stop", "target"))),
         ("模拟成交资格", _label(plan["simulation_eligibility"])),
     ))
-    return f'<article class="card"><h3>{_name(plan)}</h3><p class="small">{_qualification(plan)}</p>{facts}</article>'
+    title = _name(plan, company_labels=company_labels)
+    return f'<article class="card"><h3>{title}</h3><p class="small">{_qualification(plan)}</p>{facts}</article>'
 
 
-def _activity(row: dict, event: dict) -> str:
+def _activity(row: dict, event: dict, *, company_labels: bool) -> str:
     plan = row["plan"]
     reason = _label(event["reason"])
     if event["status"] == Status.CLOSED:
@@ -199,7 +207,7 @@ def _activity(row: dict, event: dict) -> str:
             if event["reason"] in ("ACTIVE_STOP_TOUCHED", "GAP_THROUGH_STOP"):
                 reason += " · " + " / ".join(_label(item) for item in position["active_stop_sources"])
     state = event.get("observation", event["status"])
-    return (f'<article class="activity"><div><strong>{_name(plan)}</strong><p class="small">'
+    return (f'<article class="activity"><div><strong>{_name(plan, company_labels=company_labels)}</strong><p class="small">'
             f'{reason} · {_qualification(plan)}</p></div><span class="status">{_label(state)}</span>'
             f'{_history(row)}</article>')
 
@@ -238,7 +246,7 @@ def paper_mail_text(view: dict) -> str:
     )
 
 
-def _paper_sections(view: dict, *, combined: bool = False) -> str:
+def _paper_sections(view: dict, *, combined: bool = False, company_labels: bool = True) -> str:
     study = view["study"]
     positions, pending, activity = _sections(view)
     closed = sum(row["status"] == Status.CLOSED for row in view["records"].values())
@@ -247,9 +255,9 @@ def _paper_sections(view: dict, *, combined: bool = False) -> str:
         ("当前模拟持仓", f"{len(positions)} 只"), ("待开盘检查", f"{len(pending)} 笔"),
         ("累计已结束", f"{closed} 笔"), ("当日无法确认", f"{issues} 笔"),
     ))
-    position_cards = "".join(map(_position, positions))
-    pending_cards = "".join(map(_pending, pending))
-    events = "".join(_activity(row, event) for row, event in activity)
+    position_cards = "".join(_position(row, company_labels=company_labels) for row in positions)
+    pending_cards = "".join(_pending(row, company_labels=company_labels) for row in pending)
+    events = "".join(_activity(row, event, company_labels=company_labels) for row, event in activity)
     empty_reason = "模拟资格未配置，保留开盘检查证据。" if not study["policy"] else "本轮没有符合条件且仍未退出的模拟成交。"
     rows = "".join(
         f"<tr><th scope='row'>{_label(stat['group'])}</th><td>{stat[Status.CLOSED]}</td>"
@@ -302,7 +310,7 @@ def _paper_sections(view: dict, *, combined: bool = False) -> str:
 </details></footer>"""
 
 
-def render_paper(view: dict) -> str:
+def render_paper(view: dict, *, company_labels: bool = True) -> str:
     day, study = view["trade_date"], view["study"]
     mode = "冻结日报历史复算" if study["mode"] == Mode.HISTORICAL_REPLAY else "合成数据验证"
     return f"""<!doctype html>
@@ -312,11 +320,11 @@ def render_paper(view: dict) -> str:
 <p>{mode} · {study["mode"]}</p>
 <nav aria-label="报告目录"><a href="#positions">当前持仓</a><a href="#pending">待检查</a>
 <a href="#activity">当日记录</a><a href="#performance">研究绩效</a></nav></div></header>
-<main>{_paper_sections(view)}</main></body></html>
+<main>{_paper_sections(view, company_labels=company_labels)}</main></body></html>
 """
 
 
-def render_combined_paper(daily: bytes, view: dict) -> bytes:
+def render_combined_paper(daily: bytes, view: dict, *, company_labels: bool = True) -> bytes:
     """Insert the simulated positions into the frozen layout without re-rendering its records."""
     head_end = b"</head>"
     overview_link = '<a href="#overview">今日总览</a>'.encode("utf-8")
@@ -327,5 +335,5 @@ def render_combined_paper(daily: bytes, view: dict) -> bytes:
         raise ValueError("PAPER_COMBINED_UNSUPPORTED_DAILY_LAYOUT")
     content = daily.replace(head_end, f"<style>{_COMBINED_STYLES}</style></head>".encode("utf-8"), 1)
     content = content.replace(overview_link, overview_link + '<a href="#paper-research">模拟持仓</a>'.encode("utf-8"), 1)
-    section = _paper_sections(view, combined=True).encode("utf-8")
+    section = _paper_sections(view, combined=True, company_labels=company_labels).encode("utf-8")
     return content.replace(candidates, section + b"\n" + candidates, 1)

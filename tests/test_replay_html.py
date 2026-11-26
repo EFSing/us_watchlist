@@ -86,7 +86,8 @@ class ChineseReplayTests(unittest.TestCase):
 
     def test_mobile_layout_and_search_are_self_contained(self):
         self.assertIn('content="width=device-width, initial-scale=1"', self.html)
-        self.assertIn('"Times New Roman", SimSun, NSimSun', self.html)
+        self.assertIn('-apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC"', self.html)
+        self.assertIn("font-variant-numeric: tabular-nums", self.html)
         self.assertIn("position: sticky", self.html)
         self.assertIn("@media (max-width: 760px)", self.html)
         self.assertRegex(self.html, r"\.watch-columns, \.audit-grid \{ grid-template-columns: minmax\(0, 1fr\)")

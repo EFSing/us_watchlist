@@ -82,7 +82,7 @@ def _comparison(item: VolumeMeasure) -> str:
     return f"较 1.00 倍基线偏差 {item.value - 1:+.1%}"
 
 
-def _volume_row(item: VolumeMeasure, label: str, preference: str, *, is_b: bool) -> str:
+def _volume_row(item: VolumeMeasure, label: str, preference: str, *, is_b: bool, compact: bool = False) -> str:
     is_share = item.field == VOLUME_FIELDS[0]
     if item.value is None:
         shown, explanation, meter = "—", _REASONS[item.missing_reason], ""
@@ -95,6 +95,9 @@ def _volume_row(item: VolumeMeasure, label: str, preference: str, *, is_b: bool)
         scale = "0% 至 100%" if is_share else "0 至 2 倍，中线为 1 倍"
         meter = (f'<span class="ratio-track{scale_class}" title="{scale}" aria-hidden="true">'
                  f'<i style="width:{width:.2f}%"></i></span>')
+    if compact:
+        return (f'<div class="research-metric"><dt>{label}</dt><dd>{shown}</dd>'
+                f'<div class="research-meter">{meter}</div></div>')
     direction = "偏低" if preference == "LOW" else "偏高"
     hypothesis = f"{'偏好方向' if is_b else 'B 2→3 方向参考'} · {direction}（未验证）"
     if item.field == VOLUME_FIELDS[2]:
@@ -127,8 +130,9 @@ def _judgment(row: CandidateResearch, *, is_b: bool) -> str:
     return "。".join(parts) + "。" if parts else "三项均处于同阶段中位（未验证）。"
 
 
-def _plan(row: CandidateResearch, *, is_b: bool) -> str:
+def _plan(row: CandidateResearch, *, is_b: bool, compact: bool = False) -> str:
     trade = row.trade
+    title = "参考计划" if compact else "参考计划（未验证）"
     eligibility = ""
     if is_b:
         label = {
@@ -142,25 +146,29 @@ def _plan(row: CandidateResearch, *, is_b: bool) -> str:
     if trade.plan is None:
         reason = _REASONS[trade.missing_reason]
         gap = f"<p class='note'>{escape(data_gap(row.source_gap))}</p>" if row.source_gap else ""
-        return f'<div class="watch-facts"><strong>参考计划（未验证）</strong>{eligibility}<p>{reason}</p>{gap}</div>'
+        return f'<div class="watch-facts"><strong>{title}</strong>{eligibility}<p>{reason}</p>{gap}</div>'
 
     plan = trade.plan
-    prices = "".join(f"<div><dt>{label}</dt><dd>${value:,.2f}</dd></div>" for label, value in (
-        ("触发", plan.trigger), ("止损", plan.stop), ("目标", plan.target),
+    inputs = dict(trade.inputs)
+    prices = "".join(f"<div><dt>{label}</dt><dd>${value:,.2f}</dd>{note}</div>" for label, value, note in (
+        ("触发", plan.trigger, ""), ("止损", plan.stop,
+         f'<small>收盘风险 {inputs["risk_to_close"]:.2%}</small>' if is_b and compact else ""),
+        ("目标", plan.target, ""),
     ))
     entry = "信号日收盘与触发价取高者" if is_b else "C 模拟触发价"
     stop_risk = ""
     if not is_b:
-        inputs = dict(trade.inputs)
         stop_risk = (f'\n<p class="note">至止损距离 · 参考入场 {inputs["risk_to_entry"]:.2%}'
                      f' · 信号日收盘 {inputs["risk_to_close"]:.2%}</p>')
         if inputs["stop_risk_warning"]:
             stop_risk += (f'\n<p class="note"><strong>研究风险警示</strong> · 至止损距离超过'
                           f' {inputs["stop_risk_warning_threshold"]:.0%}。</p>')
-    return f"""<div class="watch-facts"><strong>参考计划（未验证）</strong>{eligibility}
+    timing = ("" if compact else
+              '<p class="note">信号日收盘后生成，供下一交易日起参考。RR 以显示价位计算，费用、滑点及实际成交未计入。</p>')
+    return f"""<div class="watch-facts"><strong>{title}</strong>{eligibility}
 <dl class="plan-prices">{prices}<div><dt>计划 RR</dt><dd>{plan.rr:.2f} 倍</dd></div></dl>
 <p class="note">参考入场 ${plan.entry:,.2f}（{entry}） · 目标依据为{_TARGET[plan.target_rule]}。</p>{stop_risk}
-<p class="note">信号日收盘后生成，供下一交易日起参考。RR 以显示价位计算，费用、滑点及实际成交未计入。</p></div>"""
+{timing}</div>"""
 
 
 def candidate_research(row: CandidateResearch, *, is_b: bool) -> str:
@@ -185,6 +193,22 @@ def candidate_research(row: CandidateResearch, *, is_b: bool) -> str:
 <div class="research-conclusion"><strong>量能事实总结</strong><p>{facts}</p></div>
 <div class="research-conclusion"><strong>结构与量能综合判断</strong><p>{_judgment(row, is_b=is_b)}</p></div>
 </div></div>"""
+
+
+def workbench_research(row: CandidateResearch, *, is_b: bool) -> tuple[str, str]:
+    recovery = row.structure.recovery_ratio
+    progress = ""
+    if recovery is not None:
+        progress = (f'<p class="note">恢复比例 {recovery:.1%}</p>'
+                    f'<meter min="0" max="1" value="{max(0, min(1, recovery))}" aria-label="恢复比例"></meter>')
+    metrics = "".join(_volume_row(item, label, preference, is_b=is_b, compact=True)
+                      for item, label, preference in zip(row.volume.measures, _VOLUME_LABELS, PREFERENCES))
+    facts = "、".join(note for item in row.volume.measures if (note := _fact(item)))
+    return _plan(row, is_b=is_b, compact=True), f"""<div class="workbench-study">
+<div class="research-stage"><strong>结构阶段 · {_STAGE[row.structure.stage]}</strong>{progress}</div>
+<div class="volume-card"><strong>三项回踩量能</strong><dl>{metrics}</dl>
+<p class="note volume-summary">{facts or "回踩成交量资料不足"}。</p></div>
+</div>"""
 
 
 def _tickers(rows: tuple[CandidateResearch, ...], empty: str) -> str:

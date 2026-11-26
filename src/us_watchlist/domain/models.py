@@ -68,11 +68,17 @@ class Provenance:
 class UniverseMember:
     symbol: str
     active: bool
+    english_name: str = ""
+    sector: str = ""
+    market_weight: Decimal | None = None
 
     def __post_init__(self) -> None:
         require_symbol(self.symbol)
         if type(self.active) is not bool:
             raise ValueError("Member status must be a boolean")
+        weight = self.market_weight
+        if weight is not None and (not isinstance(weight, Decimal) or not weight.is_finite() or weight < 0):
+            raise ValueError("Market weight must be a finite nonnegative Decimal")
 
 
 @dataclass(frozen=True)
