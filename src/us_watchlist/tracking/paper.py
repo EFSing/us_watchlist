@@ -7,7 +7,7 @@ from hashlib import sha256
 
 from us_watchlist.domain.paper import (
     ACCOUNT_POLICY, B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
-    Status, cohort, entry_priority, needs_structure,
+    Status, account_identities, cohort, entry_priority, needs_structure,
 )
 from us_watchlist.tracking.paper_position import PositionIndicators, close_position
 
@@ -203,12 +203,6 @@ def _advance_account(records: dict, day: dict, policy: dict, session_index: int)
     occupied = new_entries = 0
     pending = []
 
-    def identities(plan):
-        keys = {("symbol", plan["symbol"])}
-        if account["deduplicate_issuer"]:
-            keys.add(("issuer", plan["issuer_key"]))
-        return keys
-
     for row in records.values():
         if row["status"] == Status.PENDING:
             pending.append(row)
@@ -222,15 +216,15 @@ def _advance_account(records: dict, day: dict, policy: dict, session_index: int)
         # Intraday exits free a slot at the close. At the open, only
         # scheduled exits and gap-through stops have already freed slots.
         if row["status"] == Status.OPEN or intraday_exit:
-            held.update(identities(row["plan"]))
+            held.update(account_identities(row["plan"], account))
             occupied += 1
         elif (row["status"] == Status.CLOSED and account["cooldown_sessions"]
               and session_index - row["exit_session_index"] <= account["cooldown_sessions"]):
-            cooling.update(identities(row["plan"]))
+            cooling.update(account_identities(row["plan"], account))
 
     def admit(plan):
         nonlocal occupied, new_entries
-        keys = identities(plan)
+        keys = account_identities(plan, account)
         if keys & held:
             return "ALREADY_HOLDING_SYMBOL"
         if keys & cooling:

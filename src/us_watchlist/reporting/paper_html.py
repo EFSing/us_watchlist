@@ -4,7 +4,9 @@ from decimal import Decimal
 from html import escape
 
 from us_watchlist.domain.company_catalog import catalog_sector_style, company_name
-from us_watchlist.domain.paper import ACCOUNT_POLICY, POSITION_PROTOCOL, STRATEGY_LABELS, Mode, Status, entry_priority
+from us_watchlist.domain.paper import (
+    ACCOUNT_POLICY, POSITION_PROTOCOL, STRATEGY_LABELS, Mode, Status, entry_priority, preview_account_orders,
+)
 from us_watchlist.domain.screening import B_SHAPE_V1, B_VERSIONS
 from us_watchlist.reporting.replay_assets import STYLE, WORKBENCH_STYLE
 from us_watchlist.reporting.replay_labels import REASON as SCREENING_REASON
@@ -511,17 +513,32 @@ def _account_position(row: dict) -> str:
 {risk_facts}{_account_timeline(row)}</details></article>"""
 
 
-def _account_orders(rows: list, *, limit: int, core_only: bool) -> str:
+_ORDER_PREVIEW_STYLE = """
+.paper-orders .yielded { background: #f8fafc; color: var(--muted); }
+.paper-orders .yielded .paper-company { color: var(--muted); }
+.paper-account .order-capacity { white-space: normal; }
+"""
+
+_ORDER_BADGES = {
+    "priority": '<span class="pill up">优先候选</span>',
+    "held": '<span class="pill">已持仓中</span>',
+    "cooling": '<span class="pill warning">冷却期</span>',
+    "duplicate": '<span class="pill">同批重复</span>',
+    "outside_core": '<span class="pill">非核心精选</span>',
+    "": "",
+}
+
+
+def _account_orders(rows: list[tuple[dict, str]]) -> str:
     if not rows:
         return '<p class="note">当前没有合格的待查委托。</p>'
     entries = []
-    for rank, row in enumerate(rows, 1):
+    for rank, (row, status) in enumerate(rows, 1):
         plan = row["plan"]
         symbol, levels = plan["symbol"], plan["levels"]
-        priority = rank <= limit and (not core_only or plan["core_rank"] is not None)
-        badge = '<span class="pill up">优先候选</span>' if priority else ""
+        badge = _ORDER_BADGES[status]
         cells = "".join(f'<td class="number">{_price(levels[key])}</td>' for key in ("trigger", "stop", "target"))
-        modifier = ' class="priority"' if priority else ""
+        modifier = ' class="priority"' if status == "priority" else ' class="yielded"' if status else ""
         entries.append(
             f'<tr{modifier}><td class="number">{rank}{badge}</td>'
             f'<th scope="row">{_company(symbol)}</th><td>{style_badge(*catalog_sector_style(symbol))}</td>'
@@ -594,12 +611,27 @@ def _account_activity(view: dict, activity: list) -> tuple[dict, str]:
     return counts, f'<div class="pills paper-event-counts">{counters}</div>{coverage}{primary}{secondary}'
 
 
-def _account_sections(view: dict, *, combined: bool) -> str:
+def _account_sections(view: dict, *, combined: bool, legacy_order_badges: bool) -> str:
     study = view["study"]
     account = study["policy"][ACCOUNT_POLICY]
     limit = account["max_new_entries_per_session"]
     positions, pending, activity = _sections(view)
-    orders = sorted((row for row in pending if row["plan"]["simulation_eligibility"] == "CONDITIONAL_T1"), key=entry_priority)
+    records = view["records"]
+    available_slots = limit
+    if legacy_order_badges:
+        # Reproduce the original account HTML for immutable report restoration.
+        eligible = sorted(
+            (row for row in pending if row["plan"]["simulation_eligibility"] == "CONDITIONAL_T1"), key=entry_priority,
+        )
+        orders = [
+            (row, "priority" if rank <= limit and (not account["core_only"] or row["plan"]["core_rank"] is not None) else "")
+            for rank, row in enumerate(eligible, 1)
+        ]
+    else:
+        session_index = view.get("session_index")
+        if session_index is None:
+            session_index = max((row.get("exit_session_index", 0) for row in records.values()), default=0)
+        available_slots, orders = preview_account_orders(records, account, session_index + 1)
     other_count = sum(row["plan"]["simulation_eligibility"] == "COHORT_NOT_ENABLED" for row in pending)
     closed = [Decimal(row["position"]["r"]) for row in view["records"].values() if row["status"] == Status.CLOSED]
     unrealized = [Decimal(row["position"]["r"]) for row in positions]
@@ -609,12 +641,15 @@ def _account_sections(view: dict, *, combined: bool) -> str:
     win_rate = f"{sum(r > 0 for r in closed) / len(closed):.1%}" if closed else "—"
     counts, events = _account_activity(view, activity)
     priority_note = "仅限核心精选" if account["core_only"] else "核心精选优先"
+    capacity_note = f"单日最多新开 {limit} 仓"
+    if available_slots < limit:
+        capacity_note = f'<span class="order-capacity">可用空仓 {available_slots} / 单日上限 {limit}</span>'
     kpis = (
         ("当前持仓占用", f'{len(positions)} / {account["max_open_positions"]} 仓', "",
          (f'今日新开 {counts["filled"]}', f'今日平仓 {counts["exited"]}')),
         ("持仓总浮动 R", _r(total), _tone(total), (f"单仓均值 {mean}", f"{wins} 盈 {losses} 亏")),
         ("累计已实现绩效", _r(realized), _tone(realized), (f"已结 {len(closed)} 笔", f"胜率 {win_rate}")),
-        ("次日合格待查委托", f"{len(orders)} 笔", "", (f"单日最多新开 {limit} 仓", priority_note)),
+        ("次日合格待查委托", f"{len(orders)} 笔", "", (capacity_note, priority_note)),
     )
     metrics = []
     for label, value, tone, notes in kpis:
@@ -631,7 +666,7 @@ def _account_sections(view: dict, *, combined: bool) -> str:
 <dl class="breadth-grid">{"".join(metrics)}</dl>
 {holdings}
 <details class="fold" id="paper-orders"><summary>次日待开盘检查合格委托 · {len(orders)} 笔{other}</summary>
-<div class="fold-content">{_account_orders(orders, limit=limit, core_only=account["core_only"])}</div></details>
+<div class="fold-content">{_account_orders(orders)}</div></details>
 <details class="fold" id="paper-activity"><summary>当日成交流水</summary><div class="fold-content">{events}</div></details>
 <details class="fold"><summary>模拟持仓审计与来源</summary><div class="fold-content">
 <p class="note">{_mode_label(study)}</p><p class="note">展示模拟毛收益。停更持仓按最近有效收盘价估值。</p>
@@ -709,13 +744,16 @@ def _paper_sections(view: dict, *, combined: bool = False, company_labels: bool 
 </details></footer>"""
 
 
-def render_paper(view: dict, *, company_labels: bool = True, legacy_layout: bool = False) -> str:
+def render_paper(
+    view: dict, *, company_labels: bool = True, legacy_layout: bool = False, legacy_order_badges: bool = False,
+) -> str:
     day, study = view["trade_date"], view["study"]
     if company_labels and not legacy_layout and ACCOUNT_POLICY in study["policy"]:
+        styles = _ACCOUNT_STYLE if legacy_order_badges else _ACCOUNT_STYLE + _ORDER_PREVIEW_STYLE
         return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>研究模拟持仓 · {day}</title><style>{STYLE}{WORKBENCH_STYLE}{_ACCOUNT_STYLE}</style></head>
-<body class="workbench"><main>{_account_sections(view, combined=False)}</main></body></html>
+<title>研究模拟持仓 · {day}</title><style>{STYLE}{WORKBENCH_STYLE}{styles}</style></head>
+<body class="workbench"><main>{_account_sections(view, combined=False, legacy_order_badges=legacy_order_badges)}</main></body></html>
 """
     mode = _mode_label(study)
     return f"""<!doctype html>
@@ -730,7 +768,7 @@ def render_paper(view: dict, *, company_labels: bool = True, legacy_layout: bool
 
 
 def render_combined_paper(
-    daily: bytes, view: dict, *, company_labels: bool = True, legacy_layout: bool = False,
+    daily: bytes, view: dict, *, company_labels: bool = True, legacy_layout: bool = False, legacy_order_badges: bool = False,
 ) -> bytes:
     """Insert the simulated positions into the frozen layout without re-rendering its records."""
     head_end = b"</head>"
@@ -741,10 +779,10 @@ def render_combined_paper(
             or [daily.index(marker) for marker in markers] != sorted(daily.index(marker) for marker in markers)):
         raise ValueError("PAPER_COMBINED_UNSUPPORTED_DAILY_LAYOUT")
     if company_labels and not legacy_layout and ACCOUNT_POLICY in view["study"]["policy"]:
-        styles = _ACCOUNT_STYLE
+        styles = _ACCOUNT_STYLE if legacy_order_badges else _ACCOUNT_STYLE + _ORDER_PREVIEW_STYLE
         if b'<body class="workbench">' not in daily:
             styles = f"@scope (#paper-research) {{ {WORKBENCH_STYLE} }}" + styles
-        section = _account_sections(view, combined=True)
+        section = _account_sections(view, combined=True, legacy_order_badges=legacy_order_badges)
     else:
         styles = _COMBINED_STYLES
         section = _paper_sections(view, combined=True, company_labels=company_labels)

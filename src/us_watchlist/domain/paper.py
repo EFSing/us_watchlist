@@ -55,6 +55,60 @@ def entry_priority(row: dict) -> tuple:
     )
 
 
+def account_identities(plan: dict, account: dict) -> set[tuple[str, str]]:
+    keys = {("symbol", plan["symbol"])}
+    if account["deduplicate_issuer"]:
+        keys.add(("issuer", plan["issuer_key"]))
+    return keys
+
+
+def preview_account_orders(records: dict, account: dict, next_session_index: int) -> tuple[int, list[tuple[dict, str]]]:
+    """Rank pending orders using the close's account state before opening prices are known."""
+    held, cooling = set(), set()
+    continuing_open = 0
+    cooldown = account["cooldown_sessions"]
+    pending = []
+    for row in records.values():
+        status, plan = row["status"], row["plan"]
+        if status == Status.OPEN:
+            if not row["position"].get("pending_exit"):
+                continuing_open += 1
+                held.update(account_identities(plan, account))
+            elif cooldown > 0:
+                cooling.update(account_identities(plan, account))
+        elif (status == Status.CLOSED and cooldown > 0 and "exit_session_index" in row
+              and next_session_index - row["exit_session_index"] <= cooldown):
+            cooling.update(account_identities(plan, account))
+        elif status == Status.PENDING and plan["simulation_eligibility"] == "CONDITIONAL_T1":
+            pending.append(row)
+
+    available_slots = min(
+        account["max_new_entries_per_session"], max(0, account["max_open_positions"] - continuing_open),
+    )
+    seen_batch = set()
+    assigned = 0
+    orders = []
+    for row in sorted(pending, key=entry_priority):
+        plan = row["plan"]
+        keys = account_identities(plan, account)
+        if account["core_only"] and plan["core_rank"] is None:
+            status = "outside_core"
+        elif keys & held:
+            status = "held"
+        elif keys & cooling:
+            status = "cooling"
+        elif keys & seen_batch:
+            status = "duplicate"
+        else:
+            seen_batch.update(keys)
+            status = ""
+            if assigned < available_slots:
+                assigned += 1
+                status = "priority"
+        orders.append((row, status))
+    return available_slots, orders
+
+
 def valid_archive_strategies(versions: set[str]) -> bool:
     return C_BALANCED in versions and len(versions & B_VERSIONS) == 1 and versions <= STRATEGY_LABELS.keys()
 
