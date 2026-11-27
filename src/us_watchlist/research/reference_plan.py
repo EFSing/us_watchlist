@@ -97,9 +97,15 @@ def _b_plan(
     if support is None:
         return _b_failure("B_NO_SUPPORT_BELOW_CLOSE", inputs)
     trigger, stop = _cents(max(platform, ma5)), _cents(support * _BUFFER)
-    risk = (close - stop) / close
-    inputs += (("support", support), ("stop_before_rounding", support * _BUFFER), ("risk_to_close", risk))
-    if not 0 < risk <= (Decimal("0.08") if us_v2 else Decimal("0.09")):
+    entry = max(_cents(close), trigger)
+    risk_to_close = (close - stop) / close
+    inputs += (("support", support), ("stop_before_rounding", support * _BUFFER), ("risk_to_close", risk_to_close))
+    if us_v2:
+        risk_to_entry = (entry - stop) / entry
+        inputs += (("reference_entry", entry), ("risk_to_entry", risk_to_entry))
+        if not (0 < risk_to_close <= Decimal("0.08") and 0 < risk_to_entry <= Decimal("0.08")):
+            return _b_failure("B_STOP_DISTANCE_OUTSIDE_RANGE", inputs)
+    elif not 0 < risk_to_close <= Decimal("0.09"):
         return _b_failure("B_STOP_DISTANCE_OUTSIDE_RANGE", inputs)
 
     if breakout_index is None:
@@ -107,18 +113,27 @@ def _b_plan(
     else:
         pressure, overhang, strongest, highs = _prior_pressure(bars, close, breakout_index)
     target_rule = "B_PRESSURE" if pressure is not None else "B_TREND_2_5R"
-    target = pressure if pressure is not None else close + _TREND_R * (close - stop)
+    basis = entry if us_v2 else close
+    target = pressure if pressure is not None else basis + _TREND_R * (basis - stop)
     rr = (target - close) / (close - stop)
     inputs += (*highs, ("overhang", overhang),
                ("target_before_rounding", target), ("rr_to_unrounded_close", rr), ("target_rule", target_rule))
     if strongest is not None:
         inputs += (("strongest_above_threshold_bin", strongest[0]), ("strongest_bin_volume", strongest[1]))
+    plan = _display_plan(trigger, stop, target, entry, target_rule)
+    gate_rr = rr
+    if us_v2:
+        inputs += (("plan_rr", plan.rr if plan is not None else None),)
+        if plan is None:
+            return PlanObservation(
+                "B_NUMERIC_REJECTED", "B_RR_BELOW_TWO_AT_ENTRY", None, "REFERENCE_LEVEL_ORDER_INVALID", inputs,
+            )
+        gate_rr = plan.rr
     reason = None
-    if rr < 2:
-        reason = "B_RR_BELOW_TWO_AT_CLOSE"
-    elif overhang > Decimal("0.5") and rr < _TREND_R:
+    if gate_rr < 2:
+        reason = "B_RR_BELOW_TWO_AT_ENTRY" if us_v2 else "B_RR_BELOW_TWO_AT_CLOSE"
+    elif overhang > Decimal("0.5") and gate_rr < _TREND_R:
         reason = "B_OVERHANG_WITH_RR_BELOW_2_5"
-    plan = _display_plan(trigger, stop, target, max(_cents(close), trigger), target_rule)
     return PlanObservation(
         "B_NUMERIC_REJECTED" if reason else "B_NUMERIC_QUALIFIED", reason, plan,
         None if plan else "REFERENCE_LEVEL_ORDER_INVALID", inputs,

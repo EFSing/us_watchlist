@@ -8,7 +8,7 @@ from statistics import median
 from us_watchlist.domain.company_catalog import SECTORS, STYLES, company_name, issuer_key, sector_style
 from us_watchlist.domain.models import MarketSnapshot, SessionBar, UniverseMember, UniverseSnapshot
 from us_watchlist.domain.replay_research import TRANSITION, ReplayResearch
-from us_watchlist.domain.screening import ScreeningResult
+from us_watchlist.domain.screening import B_US_V2, ScreeningResult
 from us_watchlist.domain.workbench import BCandidate, Breadth, BWatch, ChartDay, MarketGroup, MarketPulse, QuoteSummary, Workbench
 
 _LAST = Decimal("Infinity")
@@ -77,12 +77,19 @@ def _pulse(eligible: int, rows: list[_MarketRow]) -> MarketPulse:
     )
 
 
+def _ranking_risk(row: BCandidate) -> Decimal:
+    if row.research.strategy_version == B_US_V2:
+        risk_to_entry = dict(row.research.trade.inputs).get("risk_to_entry")
+        if risk_to_entry is not None:
+            return risk_to_entry
+    return row.risk_to_close if row.risk_to_close is not None else _LAST
+
+
 def _core_order(row: BCandidate) -> tuple:
-    risk = row.risk_to_close if row.risk_to_close is not None else _LAST
     plan = row.research.trade.plan
     return (
         not row.fresh_turn, row.research.structure.stage != TRANSITION, not row.regime_aligned,
-        risk, -plan.rr if plan is not None else _LAST, row.quote.symbol,
+        _ranking_risk(row), -plan.rr if plan is not None else _LAST, row.quote.symbol,
     )
 
 
@@ -101,7 +108,7 @@ def _favored_styles(pulse: MarketPulse) -> set[str]:
 
 def _fallback_order(row: BCandidate) -> tuple:
     return (
-        row.research.structure.stage != TRANSITION, row.risk_to_close,
+        row.research.structure.stage != TRANSITION, _ranking_risk(row),
         row.retest_ratio if row.retest_ratio is not None else _LAST, row.quote.symbol,
     )
 

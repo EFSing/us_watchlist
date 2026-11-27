@@ -204,6 +204,27 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual({row.quote.symbol for row in view.core if row.regime_aligned}, {"OGE", "AEE"})
         self.assertFalse(view.core[-1].fresh_turn)
 
+    def test_v2_ranks_by_entry_risk_and_falls_back_to_close_risk(self):
+        symbols = ("ALFA", "BRAVO", "CHARLIE", "DELTA")
+        pool, inputs = _inputs(symbols)
+        version = US_B_V2.version
+        evaluations, studies = [], []
+        for symbol, passed, close_risk, entry_risk in (
+            ("ALFA", True, ".01", ".05"), ("BRAVO", True, ".03", None),
+            ("CHARLIE", False, ".01", ".05"), ("DELTA", False, ".04", None),
+        ):
+            row = _evaluation(inputs, symbol)
+            evaluations.append(replace(row, signal=replace(row.signal, strategy=version)))
+            study = _study(symbol, passed=passed, risk=close_risk)
+            trade = study.trade
+            if entry_risk is not None:
+                trade = replace(trade, inputs=(*trade.inputs, ("risk_to_entry", Decimal(entry_risk))))
+            studies.append(replace(study, strategy_version=version.version, trade=trade))
+        view = observe_workbench(pool, inputs, ScreeningResult(version, tuple(evaluations)), (),
+                                 ReplayResearch("test", "test", tuple(studies)))
+        self.assertEqual([(row.quote.symbol, row.supplemental) for row in view.core],
+                         [("BRAVO", False), ("ALFA", False), ("DELTA", True)])
+
     def test_v2_prep_pool_requires_both_guardrails(self):
         symbols = ("PASS", "TREND", "PULLBACK", "TURN")
         pool, inputs = _inputs(symbols)

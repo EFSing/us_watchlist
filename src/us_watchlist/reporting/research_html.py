@@ -40,6 +40,7 @@ _REASONS = {
     "B_NO_SUPPORT_BELOW_CLOSE": "四项参考支撑均未低于信号日收盘价。",
     "B_STOP_DISTANCE_OUTSIDE_RANGE": "按收盘计算的止损距离须大于 0% 且不超过 9%。",
     "B_RR_BELOW_TWO_AT_CLOSE": "按信号日收盘计算的规则 RR 低于 2。",
+    "B_RR_BELOW_TWO_AT_ENTRY": "按参考入场价计算的计划 RR 低于 2。",
     "B_OVERHANG_WITH_RR_BELOW_2_5": "上方筹码占比超过 50%，且按收盘计算的规则 RR 低于 2.5。",
     "REFERENCE_LEVEL_ORDER_INVALID": "以美分展示后，止损、触发、参考入场及目标无法构成有效的多头价位。",
     "C_STRUCTURE_OR_MA5_UNAVAILABLE": "缺少连续的 5 日均线或 C 规则的结构价位。",
@@ -47,7 +48,8 @@ _REASONS = {
 _B_US_REASONS = {
     "B_ACCELERATION_OVEREXTENDED": "10 日涨幅超过 30%，且收盘高于 20 日均线逾 15%。",
     "B_GAIN_EXHAUSTED": "120 日区间位置超过 92%，且 20 日涨幅超过 35%。",
-    "B_STOP_DISTANCE_OUTSIDE_RANGE": "按收盘计算的止损距离须大于 0% 且不超过 8%。",
+    "B_STOP_DISTANCE_OUTSIDE_RANGE": "按信号日收盘和参考入场价计算的止损距离均须大于 0% 且不超过 8%。",
+    "B_OVERHANG_WITH_RR_BELOW_2_5": "上方筹码占比超过 50%，且按参考入场价计算的计划 RR 低于 2.5。",
 }
 _VOLUME_LABELS = (
     "下跌日成交量占比", "上涨／下跌日均量比", "回踩后半／前半均量比",
@@ -57,6 +59,10 @@ _TARGET = {
     "C_PRIOR_HIGH": "本段回踩前高",
     "B_TREND_2_5R": "信号日收盘风险的 2.5 倍",
     "C_TREND_2_5R": "信号日收盘风险的 2.5 倍",
+}
+_B_US_TARGET = {
+    "B_PRESSURE": "突破前历史阻力",
+    "B_TREND_2_5R": "参考入场风险的 2.5 倍",
 }
 _JUDGMENT = {"PREFERRED": "贴近偏好", "NEUTRAL": "居中", "DEVIATION": "与预期方向相反"}
 
@@ -166,9 +172,13 @@ def _plan(row: CandidateResearch, *, is_b: bool, compact: bool = False) -> str:
 
     plan = trade.plan
     inputs = dict(trade.inputs)
+    risk_note = ""
+    if is_b and compact:
+        risk_note = f'<small>收盘风险 {inputs["risk_to_close"]:.2%}</small>'
+        if us_v2 and (risk_to_entry := inputs.get("risk_to_entry")) is not None:
+            risk_note += f'<small>入场风险 {risk_to_entry:.2%}</small>'
     prices = "".join(f"<div><dt>{label}</dt><dd>${value:,.2f}</dd>{note}</div>" for label, value, note in (
-        ("触发", plan.trigger, ""), ("止损", plan.stop,
-         f'<small>收盘风险 {inputs["risk_to_close"]:.2%}</small>' if is_b and compact else ""),
+        ("触发", plan.trigger, ""), ("止损", plan.stop, risk_note),
         ("目标", plan.target, ""),
     ))
     entry = "信号日收盘与触发价取高者" if is_b else "C 模拟触发价"
@@ -181,7 +191,7 @@ def _plan(row: CandidateResearch, *, is_b: bool, compact: bool = False) -> str:
                           f' {inputs["stop_risk_warning_threshold"]:.0%}。</p>')
     timing = ("" if compact else
               '<p class="note">信号日收盘后生成，供下一交易日起参考。RR 以显示价位计算，费用、滑点及实际成交未计入。</p>')
-    target_basis = "突破前历史阻力" if us_v2 and plan.target_rule == "B_PRESSURE" else _TARGET[plan.target_rule]
+    target_basis = (_B_US_TARGET if us_v2 else _TARGET)[plan.target_rule]
     return f"""<div class="watch-facts"><strong>{title}</strong>{eligibility}
 <dl class="plan-prices">{prices}<div><dt>计划 RR</dt><dd>{plan.rr:.2f} 倍</dd></div></dl>
 <p class="note">参考入场 ${plan.entry:,.2f}（{entry}） · 目标依据为{target_basis}。</p>{stop_risk}

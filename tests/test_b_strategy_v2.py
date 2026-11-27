@@ -101,6 +101,14 @@ class UsReferencePlanTests(unittest.TestCase):
         breakout = replace(bar(102, volume=180), high=Decimal(post_high))
         return tuple(before + [breakout] + [bar(99)] * 6 + [bar(100)])
 
+    @staticmethod
+    def _below_platform_bars(*, platform=100, prior_high="95.4"):
+        before = [bar(95)] * 108 + [bar(platform)]
+        before[60] = replace(before[60], high=Decimal(prior_high))
+        breakout = bar(platform + 2, volume=180)
+        first_retest = bar("97.40", wick="0.46", volume=120)
+        return tuple(before + [breakout, first_retest] + [bar("97.40")] * 8 + [bar("97.50")])
+
     def test_current_breakout_high_is_not_historical_pressure(self):
         bars = self._bars()
         old = b_reference_plan(bars, Decimal(98))
@@ -113,14 +121,51 @@ class UsReferencePlanTests(unittest.TestCase):
         self.assertEqual(new.plan.rr.quantize(Decimal("0.01")), Decimal("2.50"))
         self.assertEqual(dict(new.inputs)["post_breakout_high"], Decimal(104))
 
-    def test_unbroken_old_high_can_still_reject_at_close(self):
+    def test_unbroken_old_high_can_still_reject_at_entry(self):
         bars = self._bars(prior_high="104.5", post_high="103.9")
         obs = b_us_reference_plan(bars, Decimal(98), 112)
-        self.assertEqual(obs.qualification_reason, "B_RR_BELOW_TWO_AT_CLOSE")
+        self.assertEqual(obs.qualification_reason, "B_RR_BELOW_TWO_AT_ENTRY")
         self.assertEqual(obs.plan.target_rule, "B_PRESSURE")
         self.assertEqual(obs.plan.target, Decimal("104.5"))
         crossed = b_us_reference_plan(self._bars(prior_high="104.5"), Decimal(98), 112)
         self.assertEqual(crossed.plan.target_rule, "B_TREND_2_5R")
+
+    def test_below_platform_trend_target_and_gate_use_entry(self):
+        obs = b_us_reference_plan(self._below_platform_bars(), Decimal(100), 109)
+        self.assertEqual(obs.qualification, "B_NUMERIC_QUALIFIED")
+        plan = obs.plan
+        self.assertEqual(plan.target_rule, "B_TREND_2_5R")
+        self.assertEqual((plan.trigger, plan.entry, plan.stop, plan.target, plan.rr),
+                         tuple(map(Decimal, ("100.00", "100.00", "95.00", "112.50", "2.50"))))
+        inputs = dict(obs.inputs)
+        self.assertEqual(inputs["reference_entry"], plan.entry)
+        self.assertEqual(inputs["risk_to_close"], Decimal("2.50") / Decimal("97.50"))
+        self.assertEqual(inputs["risk_to_entry"], Decimal("0.05"))
+        self.assertEqual(inputs["plan_rr"], Decimal("2.50"))
+        self.assertEqual(inputs["rr_to_unrounded_close"], Decimal("6"))
+
+    def test_below_platform_pressure_fails_entry_gate_and_retains_plan(self):
+        bars = self._below_platform_bars(prior_high="104.00")
+        obs = b_us_reference_plan(bars, Decimal(100), 109)
+        self.assertEqual((obs.qualification, obs.qualification_reason),
+                         ("B_NUMERIC_REJECTED", "B_RR_BELOW_TWO_AT_ENTRY"))
+        plan = obs.plan
+        self.assertEqual(plan.target_rule, "B_PRESSURE")
+        self.assertEqual((plan.entry, plan.stop, plan.target, plan.rr),
+                         tuple(map(Decimal, ("100.00", "95.00", "104.00", "0.80"))))
+        inputs = dict(obs.inputs)
+        self.assertEqual(inputs["rr_to_unrounded_close"], Decimal("2.60"))
+        self.assertEqual(inputs["plan_rr"], Decimal("0.80"))
+
+    def test_below_platform_entry_risk_can_exceed_limit_when_close_risk_passes(self):
+        bars = self._below_platform_bars(platform=104)
+        obs = b_us_reference_plan(bars, Decimal(104), 109)
+        self.assertEqual((obs.qualification, obs.qualification_reason),
+                         ("B_NUMERIC_REJECTED", "B_STOP_DISTANCE_OUTSIDE_RANGE"))
+        self.assertIsNone(obs.plan)
+        inputs = dict(obs.inputs)
+        self.assertEqual(inputs["reference_entry"], Decimal("104.00"))
+        self.assertTrue(0 < inputs["risk_to_close"] <= Decimal("0.08") < inputs["risk_to_entry"])
 
     def test_requires_history_and_valid_breakout_index_and_rejects_five_dollars(self):
         bars = self._bars()
