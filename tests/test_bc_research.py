@@ -8,6 +8,7 @@ from pathlib import Path
 
 from us_watchlist.app.bc_offline import evaluate_joint, observe_joint
 from us_watchlist.app.replay import prepare_replay
+from us_watchlist.strategies.b_breakout_retest import SHAPE_V1
 from us_watchlist.domain.models import SessionBar
 from us_watchlist.domain.replay_research import (
     TRANSITION, UNCONFIRMED, CandidateResearch, PlanObservation, StructureObservation,
@@ -206,7 +207,7 @@ class ResearchReportTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.evidence, cls.inputs = prepare_replay(CONFIG)
-        cls.b, cls.c = evaluate_joint(cls.inputs)
+        cls.b, cls.c = evaluate_joint(cls.inputs, b_rule=SHAPE_V1)
 
     def test_missing_split_sessions_cannot_be_bridged_by_a_plan_or_volume_window(self):
         row = next(row for row in self.b.evaluations if row.signal is not None)

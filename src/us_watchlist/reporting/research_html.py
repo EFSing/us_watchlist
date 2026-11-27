@@ -8,6 +8,7 @@ from us_watchlist.domain.replay_research import (
     PREFERENCES, TRANSITION, UNCONFIRMED, VOLUME_FIELDS, CandidateResearch, ReplayResearch,
     VolumeMeasure,
 )
+from us_watchlist.domain.screening import B_US_V2
 from us_watchlist.reporting.replay_labels import data_gap
 
 _STAGE = {
@@ -31,15 +32,24 @@ _REASONS = {
     "INVALID_PULLBACK_HALF_VOLUME": "前半段均量为零。",
     "B_HISTORY_LT_120": "不足 120 个连续交易日，无法核对完整价位和压力门槛。",
     "B_PLATFORM_UNAVAILABLE": "连续行情中缺少已匹配的突破平台。",
+    "B_BREAKOUT_UNAVAILABLE": "连续行情中缺少有效的突破日锚点。",
     "B_CLOSE_NOT_ABOVE_NOMINAL_2": "收盘价未高于移植数值门槛 2 美元。",
+    "B_CLOSE_NOT_ABOVE_US_5": "收盘价未高于美股 5 美元价格门槛。",
     "B_ACCELERATION_OVEREXTENDED": "10 日涨幅超过 35%，且收盘高于 20 日均线逾 15%。",
     "B_GAIN_EXHAUSTED": "区间位置超过 90%，且 20 日涨幅超过 40%。",
     "B_NO_SUPPORT_BELOW_CLOSE": "四项参考支撑均未低于信号日收盘价。",
     "B_STOP_DISTANCE_OUTSIDE_RANGE": "按收盘计算的止损距离须大于 0% 且不超过 9%。",
     "B_RR_BELOW_TWO_AT_CLOSE": "按信号日收盘计算的规则 RR 低于 2。",
+    "B_RR_BELOW_TWO_AT_ENTRY": "按参考入场价计算的计划 RR 低于 2。",
     "B_OVERHANG_WITH_RR_BELOW_2_5": "上方筹码占比超过 50%，且按收盘计算的规则 RR 低于 2.5。",
     "REFERENCE_LEVEL_ORDER_INVALID": "以美分展示后，止损、触发、参考入场及目标无法构成有效的多头价位。",
     "C_STRUCTURE_OR_MA5_UNAVAILABLE": "缺少连续的 5 日均线或 C 规则的结构价位。",
+}
+_B_US_REASONS = {
+    "B_ACCELERATION_OVEREXTENDED": "10 日涨幅超过 30%，且收盘高于 20 日均线逾 15%。",
+    "B_GAIN_EXHAUSTED": "120 日区间位置超过 92%，且 20 日涨幅超过 35%。",
+    "B_STOP_DISTANCE_OUTSIDE_RANGE": "按信号日收盘和参考入场价计算的止损距离均须大于 0% 且不超过 8%。",
+    "B_OVERHANG_WITH_RR_BELOW_2_5": "上方筹码占比超过 50%，且按参考入场价计算的计划 RR 低于 2.5。",
 }
 _VOLUME_LABELS = (
     "下跌日成交量占比", "上涨／下跌日均量比", "回踩后半／前半均量比",
@@ -50,7 +60,15 @@ _TARGET = {
     "B_TREND_2_5R": "信号日收盘风险的 2.5 倍",
     "C_TREND_2_5R": "信号日收盘风险的 2.5 倍",
 }
+_B_US_TARGET = {
+    "B_PRESSURE": "突破前历史阻力",
+    "B_TREND_2_5R": "参考入场风险的 2.5 倍",
+}
 _JUDGMENT = {"PREFERRED": "贴近偏好", "NEUTRAL": "居中", "DEVIATION": "与预期方向相反"}
+
+
+def b_gate_label(version: str) -> str:
+    return "B 美股资格门槛" if version == B_US_V2 else "B 移植数值门槛"
 
 
 def _fact(item: VolumeMeasure) -> str:
@@ -115,7 +133,8 @@ def _judgment(row: CandidateResearch, *, is_b: bool) -> str:
     if row.structure.stage != TRANSITION:
         return "同阶段预期判断适用于符合研究资格的 2→3 切换。本阶段以上述量能事实为准。"
     if not row.in_b_transition_cohort:
-        return "属于 2→3 切换代理。移植数值门槛未获确认，同阶段判断暂缺。"
+        gate = b_gate_label(row.strategy_version).removeprefix("B ")
+        return f"属于 2→3 切换代理。{gate}未获确认，同阶段判断暂缺。"
     judgments = [item.coordinate.judgment if item.coordinate else None for item in row.volume.measures]
     if any(value is None for value in judgments):
         return "综合判断需三项均可比较，现有样本或字段不足。"
@@ -134,25 +153,32 @@ def _plan(row: CandidateResearch, *, is_b: bool, compact: bool = False) -> str:
     trade = row.trade
     title = "参考计划" if compact else "参考计划（未验证）"
     eligibility = ""
+    us_v2 = row.strategy_version == B_US_V2
+    reasons = _REASONS | _B_US_REASONS if us_v2 else _REASONS
     if is_b:
-        label = {
-            "B_NUMERIC_QUALIFIED": "B 移植数值门槛 · 通过",
-            "B_NUMERIC_REJECTED": "B 移植数值门槛 · 未通过",
-            "B_NUMERIC_UNAVAILABLE": "B 移植数值门槛 · 资料不足",
+        state = {
+            "B_NUMERIC_QUALIFIED": "通过",
+            "B_NUMERIC_REJECTED": "未通过",
+            "B_NUMERIC_UNAVAILABLE": "资料不足",
         }[trade.qualification]
-        reason = (_REASONS[trade.qualification_reason]
+        label = f"{b_gate_label(row.strategy_version)} · {state}"
+        reason = (reasons[trade.qualification_reason]
                   if trade.qualification_reason and trade.qualification_reason != trade.missing_reason else "")
         eligibility = f'<p class="note">{label}。{reason}</p>'
     if trade.plan is None:
-        reason = _REASONS[trade.missing_reason]
+        reason = reasons[trade.missing_reason]
         gap = f"<p class='note'>{escape(data_gap(row.source_gap))}</p>" if row.source_gap else ""
         return f'<div class="watch-facts"><strong>{title}</strong>{eligibility}<p>{reason}</p>{gap}</div>'
 
     plan = trade.plan
     inputs = dict(trade.inputs)
+    risk_note = ""
+    if is_b and compact:
+        risk_note = f'<small>收盘风险 {inputs["risk_to_close"]:.2%}</small>'
+        if us_v2 and (risk_to_entry := inputs.get("risk_to_entry")) is not None:
+            risk_note += f'<small>入场风险 {risk_to_entry:.2%}</small>'
     prices = "".join(f"<div><dt>{label}</dt><dd>${value:,.2f}</dd>{note}</div>" for label, value, note in (
-        ("触发", plan.trigger, ""), ("止损", plan.stop,
-         f'<small>收盘风险 {inputs["risk_to_close"]:.2%}</small>' if is_b and compact else ""),
+        ("触发", plan.trigger, ""), ("止损", plan.stop, risk_note),
         ("目标", plan.target, ""),
     ))
     entry = "信号日收盘与触发价取高者" if is_b else "C 模拟触发价"
@@ -165,9 +191,10 @@ def _plan(row: CandidateResearch, *, is_b: bool, compact: bool = False) -> str:
                           f' {inputs["stop_risk_warning_threshold"]:.0%}。</p>')
     timing = ("" if compact else
               '<p class="note">信号日收盘后生成，供下一交易日起参考。RR 以显示价位计算，费用、滑点及实际成交未计入。</p>')
+    target_basis = (_B_US_TARGET if us_v2 else _TARGET)[plan.target_rule]
     return f"""<div class="watch-facts"><strong>{title}</strong>{eligibility}
 <dl class="plan-prices">{prices}<div><dt>计划 RR</dt><dd>{plan.rr:.2f} 倍</dd></div></dl>
-<p class="note">参考入场 ${plan.entry:,.2f}（{entry}） · 目标依据为{_TARGET[plan.target_rule]}。</p>{stop_risk}
+<p class="note">参考入场 ${plan.entry:,.2f}（{entry}） · 目标依据为{target_basis}。</p>{stop_risk}
 {timing}</div>"""
 
 
@@ -225,11 +252,14 @@ def research_summary(research: ReplayResearch, b_version: str) -> str:
     qualified = tuple(row for row in sorted(b, key=lambda row: row.symbol) if row.passed_b_numeric_gate)
     cohort = tuple(row for row in qualified if row.in_b_transition_cohort)
     transition_count = sum(row.structure.stage == TRANSITION for row in b)
+    gate = b_gate_label(b_version).removeprefix("B ")
+    note = ("两组按股票代码排列。" if b_version == B_US_V2 else
+            "<strong>美股正式 B 策略资格尚未建立。</strong> 两组按股票代码排列。")
     return f"""<div class="research-overview">
 <div class="research-lists">
 <section id="b-numeric-pass" class="research-list">
 <h3>B 数值门槛通过 <span>{len(qualified):,}／{len(b):,} 只</span></h3>
-<p class="note">在 B 形态匹配中核对移植数值门槛。未通过 {counts["B_NUMERIC_REJECTED"]:,} 只，资料不足 {counts["B_NUMERIC_UNAVAILABLE"]:,} 只。</p>
+<p class="note">在 B 形态匹配中核对{gate}。未通过 {counts["B_NUMERIC_REJECTED"]:,} 只，资料不足 {counts["B_NUMERIC_UNAVAILABLE"]:,} 只。</p>
 <div class="ticker-list">{_tickers(qualified, "本轮无通过记录")}</div>
 </section>
 <section id="b-structure-focus" class="research-list">
@@ -238,7 +268,7 @@ def research_summary(research: ReplayResearch, b_version: str) -> str:
 <div class="ticker-list">{_tickers(cohort, "本轮无交集记录")}</div>
 </section>
 </div>
-<p class="note"><strong>美股正式 B 策略资格尚未建立。</strong> 两组按股票代码排列。</p>
+<p class="note">{note}</p>
 <p class="note">可显示参考计划 · B {sum(row.trade.plan is not None for row in b):,}／{len(b):,} 只，
 C {sum(row.trade.plan is not None for row in c):,}／{len(c):,} 条规则匹配。</p>
 </div>"""

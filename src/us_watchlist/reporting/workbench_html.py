@@ -4,11 +4,11 @@ from decimal import Decimal
 from html import escape
 
 from us_watchlist.domain.replay_research import TRANSITION
+from us_watchlist.domain.screening import B_US_V2
 from us_watchlist.domain.workbench import BCandidate, Breadth, MarketGroup, QuoteSummary, Workbench
 from us_watchlist.reporting.replay_labels import metric_cells
-from us_watchlist.reporting.research_html import research_definitions, workbench_research
+from us_watchlist.reporting.research_html import b_gate_label, research_definitions, workbench_research
 
-B_VERSION = "us_breakout_retest_shape_v1"
 _STYLE = {"防御": "defensive", "成长": "growth", "周期": "cyclical", "未分类": "unclassified"}
 
 
@@ -141,8 +141,8 @@ def chart_svg(row: BCandidate) -> str:
     next_label = 17
     for label, price, modifier in sorted(guides, key=lambda guide: (-guide[1], guide[0])):
         price_y = y(price)
-        label_y = max(next_label, min(91, price_y))
-        next_label = label_y + 16
+        label_y = max(next_label, min(83, price_y))
+        next_label = label_y + 27
         markers.append(
             f'<path class="guide {modifier}" d="M12,{price_y:.2f} H323 L330,{label_y:.2f} H335"/>'
             f'<text class="guide-label {modifier}" x="339" y="{label_y:.2f}" dominant-baseline="middle">'
@@ -169,18 +169,31 @@ def _b_details(row: BCandidate) -> str:
 <dl class="metrics">{original}</dl></details>"""
 
 
-def _core_card(row: BCandidate) -> str:
+def _signal_badges(row: BCandidate, version: str) -> str:
+    if version != B_US_V2:
+        return ""
+    turn = ('<span class="pill signal-fresh">今日新转强</span>' if row.fresh_turn else
+            '<span class="pill signal-continuing">延续站稳</span>')
+    if row.regime_aligned:
+        label = "顺应防御轮动" if row.quote.style == "防御" else "顺应强势风格"
+        turn += f'<span class="pill signal-aligned">{label}</span>'
+    return turn
+
+
+def _core_card(row: BCandidate, version: str) -> str:
     symbol = escape(row.quote.symbol)
-    flags = '<span class="pill warning">精选观察递补（原数值门槛未过）</span>' if row.supplemental else (
-        '<span class="pill">B 数值门槛通过</span>')
+    gate = b_gate_label(version) if version == B_US_V2 else "B 数值门槛"
+    flags = _signal_badges(row, version)
+    flags += ('<span class="pill warning">精选观察递补（数值门槛未过）</span>' if row.supplemental else
+              f'<span class="pill">{gate}通过</span>')
     if row.research.structure.stage == TRANSITION:
         flags += '<span class="pill">2→3 切换</span>'
-    return f"""<article class="watch-card core-card" id="{B_VERSION}-{symbol}" data-core-symbol="{symbol}"
+    return f"""<article class="watch-card core-card" id="{version}-{symbol}" data-core-symbol="{symbol}"
 data-core-name="{escape(row.quote.name)}" data-core-sector="{row.quote.sector}">
 {quote_heading(row.quote, "h4")}<div class="pills selection-flags">{flags}</div>{_b_details(row)}</article>"""
 
 
-def _other_table(rows: tuple[BCandidate, ...]) -> str:
+def _other_table(rows: tuple[BCandidate, ...], version: str) -> str:
     if not rows:
         return '<p class="empty">本轮所有 B 形态匹配均已列在上方，或本轮无匹配。</p>'
     bodies = []
@@ -195,19 +208,19 @@ def _other_table(rows: tuple[BCandidate, ...]) -> str:
                 (row.research.structure.stage == TRANSITION, "2→3 切换"), (row.same_issuer, "同公司多类股"),
             ) if condition
         ]
-        badges = "".join(f'<span class="pill">{label}</span>' for label in flags)
+        badges = _signal_badges(row, version) + "".join(f'<span class="pill">{label}</span>' for label in flags)
         sector = _badge(quote.sector, quote.style)
         search = escape(f"{quote.symbol} {quote.name} {quote.english_name} {quote.sector} {' '.join(flags)}".lower())
         fields = (quote.daily_change, row.distance_to_platform, row.risk_to_close, rr, row.retest_ratio)
         sort_data = " ".join(f'data-value-{i}="{value if value is not None else ""}"' for i, value in enumerate(fields))
-        bodies.append(f"""<tbody data-other-entry><tr id="{B_VERSION}-{symbol}" data-search="{search}"
+        bodies.append(f"""<tbody data-other-entry><tr id="{version}-{symbol}" data-search="{search}"
 data-style="{quote.style}" data-flags="{' '.join(label for label in flags if label != '同公司多类股')}" {sort_data}>
-<th scope="row"><a href="#{B_VERSION}-{symbol}">{symbol}</a><small>{escape(quote.name) if quote.name != quote.symbol else ""}</small></th>
+<th scope="row"><a href="#{version}-{symbol}">{symbol}</a><small>{escape(quote.name) if quote.name != quote.symbol else ""}</small></th>
 <td>{sector}<div class="row-flags">{badges}</div></td>
 <td class="number">${quote.close:,.2f}<br>{_change(quote.daily_change)}</td>
 <td class="number">{_pct(row.distance_to_platform, signed=True)}</td><td class="number">{_pct(row.risk_to_close)}</td>
 <td class="number">{f"{rr:.2f}" if rr is not None else "—"}</td>
-<td class="number">{_pct(row.retest_ratio)}</td><td class="number"><a class="detail-link" href="#{B_VERSION}-{symbol}">详情</a></td></tr>
+<td class="number">{_pct(row.retest_ratio)}</td><td class="number"><a class="detail-link" href="#{version}-{symbol}">详情</a></td></tr>
 <tr class="detail-row"><td colspan="8"><details class="candidate-details"><summary>{symbol} 参考计划、量能与走势图</summary>
 {_links(quote.symbol)}{_b_details(row)}</details></td></tr></tbody>""")
     sorts = tuple(f'<button type="button" data-sort="{i}">{label}<span aria-hidden="true"> ↕</span></button>'
@@ -221,8 +234,8 @@ data-style="{quote.style}" data-flags="{' '.join(label for label in flags if lab
 <output for="search-b-matches" aria-live="polite"></output></div>{table}"""
 
 
-def b_sections(view: Workbench, diagnostics: str, *, failed: bool) -> str:
-    core = "".join(_core_card(row) for row in view.core)
+def b_sections(view: Workbench, diagnostics: str, *, version: str, failed: bool) -> str:
+    core = "".join(_core_card(row, version) for row in view.core)
     if not core:
         core = ('<p class="empty">该规则执行失败。原始异常见审计区。</p>' if failed else
                 '<p class="empty">本轮没有满足精选条件的股票。</p>')
@@ -235,11 +248,12 @@ def b_sections(view: Workbench, diagnostics: str, *, failed: bool) -> str:
     )
     watch_table = _table("待转强预备池", ("公司", "板块·风格", "收盘", "当日涨跌", "平台", "距平台", "回踩均量 / 突破量", "行情"),
                          f'<tbody>{watch}</tbody>', extra_class="watch-table") if watch else '<p class="empty">本轮无预备池股票。</p>'
-    return f"""<section class="panel" id="{B_VERSION}"><h2>B 观察台</h2>
+    guardrails = "通过 MA50 趋势与峰值回撤检查，" if version == B_US_V2 else ""
+    return f"""<section class="panel" id="{version}"><h2>B 观察台</h2>
 <section id="b-core" class="workbench-subsection"><h3>今日核心精选 <span class="count">{len(view.core)} 只</span></h3>
 <div class="watch-list">{core}</div></section>
 <section id="b-other" class="workbench-subsection"><h3>其余 B 形态匹配 <span class="count">{len(view.other)} 只</span></h3>
-{_other_table(view.other)}</section>
+{_other_table(view.other, version)}</section>
 <section id="b-watch" class="workbench-subsection"><h3>回踩到位 · 待转强预备池 <span class="count">{len(view.watch)} 只</span></h3>
-<p class="section-note">已完成放量突破且缩量回踩在平台支撑带内，仅当日未转强，供下一交易日盯盘观察。</p>
+<p class="section-note">{guardrails}已完成放量突破且缩量回踩在平台支撑带内，仅当日未转强，供下一交易日盯盘观察。</p>
 {watch_table}</section>{diagnostics}</section>"""

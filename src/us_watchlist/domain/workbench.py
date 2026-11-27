@@ -77,6 +77,8 @@ class BCandidate:
     risk_to_close: Decimal | None
     supplemental: bool = False
     same_issuer: bool = False
+    fresh_turn: bool = True
+    regime_aligned: bool = False
 
     @property
     def distance_to_platform(self) -> Decimal:

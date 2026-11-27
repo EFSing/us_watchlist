@@ -5,18 +5,22 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from us_watchlist.domain.models import PriceBasis
+from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2, B_VERSIONS
 
 PROTOCOL = "us_iwb_paper_open_v1"
 POSITION_PROTOCOL = "us_iwb_paper_position_v2"
+C_BALANCED = "us_c_trend_pullback_balanced_a_v1"
+C_CONSERVATIVE = "us_c_trend_pullback_conservative_b_v1"
 STRATEGIES = {
-    "us_breakout_retest_shape_v1": "B 突破回踩",
-    "us_c_trend_pullback_balanced_a_v1": "C 均衡",
+    B_US_V2: "B 美股突破回踩 V2",
+    C_BALANCED: "C 均衡",
 }
 RETIRED_STRATEGIES = {
-    "us_c_trend_pullback_conservative_b_v1": "C 保守",
+    B_SHAPE_V1: "B 突破回踩 V1",
+    C_CONSERVATIVE: "C 保守",
 }
 STRATEGY_LABELS = MappingProxyType(STRATEGIES | RETIRED_STRATEGIES)
-B_VERSION = next(iter(STRATEGIES))
+B_VERSION = B_US_V2
 BASIS = PriceBasis.YAHOO_CHART_QUOTE
 
 
@@ -36,6 +40,10 @@ class Status(StrEnum):
 
 def cohort(plan: dict) -> str:
     return f"{plan['qualification']}:{plan['risk_warning']}"
+
+
+def valid_archive_strategies(versions: set[str]) -> bool:
+    return C_BALANCED in versions and len(versions & B_VERSIONS) == 1 and versions <= STRATEGY_LABELS.keys()
 
 
 def needs_structure(model: dict) -> bool:
@@ -90,12 +98,12 @@ def check_policy(policy: dict, protocol: str = PROTOCOL) -> None:
         raise ValueError("PAPER_UNSUPPORTED_PROTOCOL")
     if not isinstance(policy, dict) or not all(isinstance(cohorts, dict) for cohorts in policy.values()):
         raise ValueError("PAPER_INVALID_POLICY")
-    if set(policy) - STRATEGIES.keys():
+    if set(policy) - (B_VERSIONS | {C_BALANCED}):
         raise ValueError("PAPER_UNKNOWN_POLICY_STRATEGY")
     for version, cohorts in policy.items():
-        qualifications = ("B_NUMERIC_QUALIFIED", "B_NUMERIC_REJECTED") if version == B_VERSION else ("C_PRICE_RESEARCH",)
+        qualifications = ("B_NUMERIC_QUALIFIED", "B_NUMERIC_REJECTED") if version in B_VERSIONS else ("C_PRICE_RESEARCH",)
         allowed = {f"{qualification}:{risk}" for qualification in qualifications for risk in (
-            ("UNKNOWN",) if version == B_VERSION else ("WARNING", "CLEAR")
+            ("UNKNOWN",) if version in B_VERSIONS else ("WARNING", "CLEAR")
         )}
         if set(cohorts) - allowed:
             raise ValueError("PAPER_UNKNOWN_POLICY_COHORT")

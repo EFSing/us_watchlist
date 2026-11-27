@@ -7,7 +7,10 @@ from decimal import Decimal
 
 from us_watchlist.domain.models import PriceBasis, Provenance, Signal, StrategyVersion, UniverseSnapshot
 
-Metrics = tuple[tuple[str, str | int | float | Decimal | bool], ...]
+Metrics = tuple[tuple[str, str | int | float | Decimal | bool | None], ...]
+B_SHAPE_V1 = "us_breakout_retest_shape_v1"
+B_US_V2 = "us_breakout_retest_v2"
+B_VERSIONS = frozenset({B_SHAPE_V1, B_US_V2})
 
 
 @dataclass(frozen=True)

@@ -21,7 +21,7 @@
 
 ## C 独立研究与联合日报
 
-- Draft PR #18 中，`bc-offline` 与 `iwb-report` 使用同一已校验输入运行 B 突破回踩与 C 均衡，
+- PR #18 合并后，`bc-offline` 与 `iwb-report` 使用同一已校验输入运行 B 突破回踩与 C 均衡，
   生成带独立研究记录的单文件 HTML。C 保守已从活跃评估、日报、邮件摘要和新模拟政策下线。
   合成验证覆盖 C 独立于 B 匹配、策略窗口边界和单策略故障隔离。
 - 11-16 的实际 Candidate 为 1,001 只，C BALANCED_A 匹配 MSCI，CONSERVATIVE_B 为零。
@@ -79,6 +79,21 @@
 - 2026-11-18、19、20、23 的双规则预览位于 `.runtime/artifacts/bc-offline/workbench-preview-v1/`，
   使用对应日期的冻结输入重新评估。
   四天核心精选分别为 5、3、4、6 只，其中 11-19 的 3 只均为观察递补。
+
+### 美股 B V2 审阅
+
+- `PROJECT_GOVERNANCE_STATE_CONFLICT` 已核对。PR #18 已合并至 `origin/main` 的 `a8f5555`。
+  PR-2 从该提交分支，在 `bc-offline` 与新生成的 `iwb-report` 评估 `us_breakout_retest_v2`
+  及 `us_bc_reference_research_v2`。`b-offline` 继续使用 V1。运行目录以
+  `D:\ChatGPT\projects\us_stock_watchlist` 为准。
+- B V2 使用 ATR14 涨幅门槛、MA50 趋势和峰值回撤护栏。计划只用突破前筹码和未越过的历史前高判断阻力。
+  趋势目标与资格 RR 使用参考入场价，收盘和参考入场的止损距离均须大于零且至多 8%。工作台优先列今日新转强，
+  其次按 2→3、顺风风格、参考入场风险、计划 RR 及代码排序。
+- 11-18、19、20、23 同批冻结输入的 V2 形态匹配为 51、8、19、46 只，资格通过为 34、7、14、32 只。
+  所有资格通过记录的计划 RR 均至少为 2.00。预备池显示 10、10、10、7 只。四份 HTML 和截图位于
+  `.runtime/artifacts/bc-offline/workbench-preview-v2/`。见 [公式和四日对照](BC_REFERENCE_RESEARCH.md#美股-b-v2)。
+- `iwb-paper` 同链可读取 B V1 或 B V2 的归档，保留策略版本及资格分组。合成验证覆盖跨版本推进，
+  两套账本协议对 11-18 至 11-19 的原冻结日报无政策复算摘要均与文档一致。见 [账本与恢复](IWB_PAPER.md)。
 
 ## IWB 研究模拟持仓
 

@@ -231,6 +231,9 @@ WORKBENCH_STYLE = """
 .workbench-subsection > h3 { font-size: 19px; margin-bottom: 7px; }
 .count { padding-left: 4px; color: var(--muted); font-weight: 500; font-size: 14px; }
 .core-card { padding: 13px 15px; border-left: 1px solid var(--border); border-radius: 9px; }
+.pill.signal-fresh { color: #075445; background: #cefae9; border-color: #58aa92; font-weight: 700; }
+.pill.signal-continuing { color: #46596a; background: #eff3f6; border-color: #cbd5de; }
+.pill.signal-aligned { color: #285478; background: #eaf4fc; border-color: #a5c5de; }
 .quote-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; align-items: start; }
 .quote-head h4 { font-size: 20px; line-height: 1.25; }
 .quote-head .ticker { color: #134e68; font-weight: 800; }

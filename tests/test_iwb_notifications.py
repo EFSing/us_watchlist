@@ -11,6 +11,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from us_watchlist.app.iwb_notifications import send_iwb_email
+from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2
 from us_watchlist.integrations.smtp_mail import send_mail
 from us_watchlist.reporting.iwb_email import render_email_summary
 
@@ -26,13 +27,22 @@ RUN = {
     "trade_date": TARGET.isoformat(), "status": "PARTIAL_COVERAGE", "base_equities": 1021,
     "listed_equities": 1020, "target_bars": 1020, "full_history_symbols": 994,
     "strategies": {
-        "us_breakout_retest_shape_v1": {"matches": 31},
+        B_SHAPE_V1: {"matches": 31},
         "us_c_trend_pullback_balanced_a_v1": {"matches": 3},
     },
 }
 
 
 class MailTests(unittest.TestCase):
+    def test_v2_summary_uses_the_active_b_version(self):
+        current = {**RUN, "strategies": {**RUN["strategies"], B_US_V2: {"matches": 51}}}
+        v2_only = {**current, "strategies": {version: row for version, row in current["strategies"].items()
+                                             if version != B_SHAPE_V1}}
+        self.assertEqual(render_email_summary(v2_only), render_email_summary(current))
+        _, plain, html = render_email_summary(current)
+        self.assertIn("B 美股突破回踩 V2：51 只", plain)
+        self.assertIn("51 只</td>", html)
+
     def test_two_rule_and_historical_three_rule_receipts_have_the_same_summary(self):
         legacy = {**RUN, "strategies": {**RUN["strategies"], RETIRED: {"matches": 1}}}
         current = render_email_summary(RUN)

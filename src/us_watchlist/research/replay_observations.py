@@ -4,13 +4,18 @@ from datetime import date
 from decimal import Decimal
 
 from us_watchlist.domain.models import SessionBar
-from us_watchlist.domain.replay_research import UNCONFIRMED, CandidateResearch, StructureObservation
-from us_watchlist.domain.screening import Evaluation
+from us_watchlist.domain.replay_research import (
+    REFERENCE_V1, REFERENCE_V2, UNCONFIRMED, CandidateResearch, StructureObservation,
+)
+from us_watchlist.domain.screening import B_US_V2, Evaluation
 from us_watchlist.research.pullback import b_structure, pullback_volume
-from us_watchlist.research.reference_plan import b_reference_plan, c_reference_plan
+from us_watchlist.research.reference_plan import b_reference_plan, b_us_reference_plan, c_reference_plan
 
-VERSION = "us_bc_reference_research_v1"
 REFERENCE_COMMIT = "85abb04acb86e3396f635218e7087c00a0d8339a"
+
+
+def research_version(b_version: str) -> str:
+    return REFERENCE_V2 if b_version == B_US_V2 else REFERENCE_V1
 
 
 def observe_candidate(
@@ -34,7 +39,11 @@ def observe_candidate(
     if is_b:
         structure = b_structure(bars, days, anchor)
         price = anchors.get("Platform")
-        trade = b_reference_plan(bars, price if anchor is not None and isinstance(price, Decimal) else None)
+        platform = price if anchor is not None and isinstance(price, Decimal) else None
+        if row.signal.strategy.version == B_US_V2:
+            trade = b_us_reference_plan(bars, platform, anchor)
+        else:
+            trade = b_reference_plan(bars, platform)
     else:
         support = by_date.get(anchors.get("First low date"))
         rebound = by_date.get(anchors.get("Rebound date"))

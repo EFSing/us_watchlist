@@ -6,6 +6,8 @@ from decimal import Decimal
 
 from us_watchlist.domain.screening import Metrics
 
+REFERENCE_V1 = "us_bc_reference_research_v1"
+REFERENCE_V2 = "us_bc_reference_research_v2"
 VOLUME_FIELDS = ("down_volume_share", "up_down_volume_ratio", "pullback_volume_decay_ratio")
 PREFERENCES = ("LOW", "HIGH", "LOW")
 TRANSITION = "W2_TO_W3_TRANSITION_PROXY"

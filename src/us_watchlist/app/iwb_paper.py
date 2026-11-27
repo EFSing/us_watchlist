@@ -7,7 +7,9 @@ from pathlib import Path
 
 from us_watchlist.app.paper_inputs import load_day
 from us_watchlist.domain.models import require_utc
-from us_watchlist.domain.paper import BASIS, POSITION_PROTOCOL, PROTOCOL, Mode, check_policy
+from us_watchlist.domain.paper import BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, Mode, check_policy
+from us_watchlist.domain.replay_research import REFERENCE_V1
+from us_watchlist.domain.screening import B_SHAPE_V1
 from us_watchlist.integrations.local_artifacts import publish_once, read_artifact
 from us_watchlist.integrations.paper_ledger import canonical, publish_day, restore_day, study_identity
 from us_watchlist.integrations.xnys import next_session, regular_windows, sessions_between
@@ -57,7 +59,7 @@ def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
     return report
 
 
-def _publish_paper_view(path: Path, view: dict, daily: bytes | None) -> None:
+def _publish_paper_view(path: Path, view: dict, daily: bytes | None, b_version: str) -> None:
     def render(projection: dict, *, company_labels: bool) -> bytes:
         if daily is not None:
             return render_combined_paper(daily, projection, company_labels=company_labels)
@@ -70,7 +72,7 @@ def _publish_paper_view(path: Path, view: dict, daily: bytes | None) -> None:
         # Accept exact bytes from before company labels or the retirement of empty performance rows.
         existing = read_artifact(path)
         if existing != render(view, company_labels=False):
-            legacy = {**view, "performance": summarize(view["records"], include_empty_retired=True)}
+            legacy = {**view, "performance": summarize(view["records"], b_version=b_version, include_empty_retired=True)}
             if existing not in (render(legacy, company_labels=True), render(legacy, company_labels=False)):
                 raise
 
@@ -130,9 +132,10 @@ def run_study(
 
     for row in records.values():
         row.pop("_indicators", None)
+    b_version = B_SHAPE_V1 if evidence["source"]["research_version"] == REFERENCE_V1 else B_VERSION
     view = {"study": study, "trade_date": str(target), "ledger_sha256": digest,
-            "source": evidence["source"], "records": records, "performance": summarize(records)}
-    _publish_paper_view(output / ("report.html" if daily is not None else "paper-report.html"), view, daily)
+            "source": evidence["source"], "records": records, "performance": summarize(records, b_version=b_version)}
+    _publish_paper_view(output / ("report.html" if daily is not None else "paper-report.html"), view, daily, b_version)
     if daily is None:
         publish_once(output / "paper-email.txt", paper_mail_text(view).encode("utf-8"))
     return output, view
