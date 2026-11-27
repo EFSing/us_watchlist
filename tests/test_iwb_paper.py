@@ -1,4 +1,5 @@
 import json
+import re
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from copy import deepcopy
@@ -12,7 +13,7 @@ from unittest.mock import patch
 from us_watchlist.app.iwb_paper import run_study
 from us_watchlist.app.paper_inputs import _screening, _structure_origin, load_day
 from us_watchlist.domain.paper import (
-    BASIS, B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
+    ACCOUNT_POLICY, BASIS, B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
     STRATEGIES, Mode, Status, check_policy,
 )
 from us_watchlist.domain.replay_research import REFERENCE_V1, REFERENCE_V2, VOLUME_FIELDS
@@ -142,6 +143,105 @@ def position_day(day, *, bar=SIGNAL_BAR, previous=SIGNAL_BAR, signal=False):
                 next_opens_at=following.opens_at.isoformat(), seeds={})
     data["source"].update(price_basis=BASIS, observed_at=(current.closes_at + timedelta(hours=1)).isoformat())
     return data
+
+
+class AccountOrderPreviewTests(unittest.TestCase):
+    @staticmethod
+    def row(symbol, rank=None, *, status=Status.PENDING, issuer=None, strategy=B_VERSION, **fields):
+        plan = candidate(symbol, strategy)
+        plan.update(issuer_key=issuer or symbol, core_rank=rank, entry_risk="0.05", fresh_turn=True,
+                    simulation_eligibility="CONDITIONAL_T1")
+        position = None
+        if status == Status.OPEN:
+            position = {
+                "entry": "100", "latest_price": "102", "r": "0.4", "stop": "95", "entry_date": str(START),
+                "return": "0.02", "pnl_per_unit": "2", "initial_stop": "95", "initial_rr": "4",
+                "mfe_r": "0.8", "mae_r": "-0.2", "priced_on": str(T3),
+            }
+        elif status == Status.CLOSED:
+            position = {"r": "-1"}
+        return {"plan": plan, "history": [], "status": status, "position": position, **fields}
+
+    @staticmethod
+    def view(rows, **account):
+        return {
+            "study": {
+                "mode": Mode.SYNTHETIC, "first_session": str(START), "protocol": POSITION_PROTOCOL,
+                "policy": {ACCOUNT_POLICY: {
+                    "max_open_positions": 8, "max_new_entries_per_session": 3,
+                    "cooldown_sessions": 5, "deduplicate_issuer": True, "core_only": False, **account,
+                }},
+            },
+            "trade_date": str(T3), "ledger_sha256": "a" * 64, "source": evidence(T3)["source"],
+            "records": dict(enumerate(rows)), "session_index": 9,
+        }
+
+    def assert_orders(self, html, expected):
+        orders = html.split('id="paper-orders"', 1)[1].split("</details>", 1)[0]
+        rows = re.findall(r'<tr(?: class="([^"]+)")?><td class="number">(\d+)(.*?)</td>(.*?)</tr>', orders)
+        self.assertEqual(len(rows), len(expected))
+        for rank, ((row_class, actual_rank, badge, cells), (symbol, expected_class, label)) in enumerate(
+            zip(rows, expected), 1,
+        ):
+            with self.subTest(rank=rank, symbol=symbol):
+                self.assertEqual(actual_rank, str(rank))
+                self.assertIn(f">{symbol}</span>", cells)
+                self.assertEqual(row_class, expected_class)
+                self.assertEqual(badge, label)
+
+    def test_held_and_duplicate_orders_yield_with_only_two_open_slots(self):
+        row = self.row
+        positions = [row(symbol, status=Status.OPEN) for symbol in ("AHR", "GOOG", "EG", "PNR", "CHE", "OGE")]
+        positions[1]["plan"]["issuer_key"] = "ALPHABET"
+        pending = [
+            row("AHR", 0), row("GOOGL", 1, issuer="ALPHABET"), row("IDXX", 2),
+            row("IDXX", 3, strategy=BALANCED), row("LLYVA", 4, issuer="LIBERTY"),
+            row("CDW", 5), row("LLYVK", 6, issuer="LIBERTY"), row("CDW", 7, strategy=BALANCED),
+        ]
+        html = render_paper(self.view(positions + pending[::-1]))
+        held = '<span class="pill">已持仓中</span>'
+        priority = '<span class="pill up">优先候选</span>'
+        duplicate = '<span class="pill">同批重复</span>'
+        self.assert_orders(html, [
+            ("AHR", "yielded", held), ("GOOGL", "yielded", held), ("IDXX", "priority", priority),
+            ("IDXX", "yielded", duplicate), ("LLYVA", "priority", priority), ("CDW", "", ""),
+            ("LLYVK", "yielded", duplicate), ("CDW", "yielded", duplicate),
+        ])
+        self.assertIn("可用空仓 2 / 单日上限 3", html)
+
+    def test_cooldown_and_scheduled_exit_yield_but_release_slots(self):
+        row = self.row
+        scheduled = row("GOOG", status=Status.OPEN, issuer="ALPHABET")
+        scheduled["position"]["pending_exit"] = {"session": "2026-01-09", "reasons": ["STRUCTURE_NEXT_OPEN"]}
+        positions = [
+            scheduled, row("AHR", status=Status.CLOSED, exit_session_index=5),
+            row("JAN", status=Status.CLOSED, exit_session_index=4), row("PNR", status=Status.CLOSED),
+        ]
+        pending = [row("GOOGL", 0, issuer="ALPHABET"), row("AHR", 1), row("JAN", 2), row("PNR", 3), row("EG")]
+        view = self.view(positions + pending, max_open_positions=2, core_only=True)
+        cooling = '<span class="pill warning">冷却期</span>'
+        priority = '<span class="pill up">优先候选</span>'
+        outside = '<span class="pill">非核心精选</span>'
+        html = render_paper(view)
+        self.assert_orders(html, [
+            ("GOOGL", "yielded", cooling), ("AHR", "yielded", cooling), ("JAN", "priority", priority),
+            ("PNR", "priority", priority), ("EG", "yielded", outside),
+        ])
+        self.assertIn("可用空仓 2 / 单日上限 3", html)
+
+        del view["session_index"]
+        self.assert_orders(render_paper(view), [
+            ("GOOGL", "yielded", cooling), ("AHR", "yielded", cooling), ("JAN", "yielded", cooling),
+            ("PNR", "priority", priority), ("EG", "yielded", outside),
+        ])
+
+        view["study"]["policy"][ACCOUNT_POLICY].update(cooldown_sessions=0, max_open_positions=8)
+        html = render_paper(view)
+        self.assert_orders(html, [
+            ("GOOGL", "priority", priority), ("AHR", "priority", priority), ("JAN", "priority", priority),
+            ("PNR", "", ""), ("EG", "yielded", outside),
+        ])
+        self.assertIn("单日最多新开 3 仓", html)
 
 
 class PaperTests(unittest.TestCase):

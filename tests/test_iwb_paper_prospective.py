@@ -143,10 +143,18 @@ class AccountPolicyTests(PaperTests):
         study = view["study"]
         path = self.root / Mode.SYNTHETIC / study_identity(study) / str(T1) / "paper-report.html"
         self.assertEqual(path.read_bytes(), standalone.encode())
-        old_report = render_paper(view, legacy_layout=True).encode()
-        path.write_bytes(old_report)
-        run_study(self.root, Mode.SYNTHETIC, START, T1, study["policy"], protocol=POSITION_PROTOCOL)
-        self.assertEqual(path.read_bytes(), old_report)
+        ledger = path.parent / "day.json"
+        ledger_bytes = ledger.read_bytes()
+        self.assertNotIn("session_index", json.loads(ledger_bytes)["body"]["evidence"])
+        for options in ({"legacy_layout": True}, {"legacy_order_badges": True}):
+            with self.subTest(options=options):
+                old_report = render_paper(view, **options).encode()
+                self.assertNotEqual(old_report, standalone.encode())
+                path.write_bytes(old_report)
+                _, restored = run_study(self.root, Mode.SYNTHETIC, START, T1, study["policy"], protocol=POSITION_PROTOCOL)
+                self.assertEqual(path.read_bytes(), old_report)
+                self.assertEqual(restored["session_index"], 1)
+                self.assertEqual(ledger.read_bytes(), ledger_bytes)
 
     def test_secondary_priority_and_core_only(self):
         first = [

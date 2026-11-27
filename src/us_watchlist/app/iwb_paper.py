@@ -60,10 +60,17 @@ def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
 
 
 def _publish_paper_view(path: Path, view: dict, daily: bytes | None, b_version: str) -> None:
-    def render(projection: dict, *, company_labels: bool, legacy_layout: bool = False) -> bytes:
+    def render(
+        projection: dict, *, company_labels: bool, legacy_layout: bool = False, legacy_order_badges: bool = False,
+    ) -> bytes:
         if daily is not None:
-            return render_combined_paper(daily, projection, company_labels=company_labels, legacy_layout=legacy_layout)
-        return render_paper(projection, company_labels=company_labels, legacy_layout=legacy_layout).encode("utf-8")
+            return render_combined_paper(
+                daily, projection, company_labels=company_labels, legacy_layout=legacy_layout,
+                legacy_order_badges=legacy_order_badges,
+            )
+        return render_paper(
+            projection, company_labels=company_labels, legacy_layout=legacy_layout, legacy_order_badges=legacy_order_badges,
+        ).encode("utf-8")
 
     body = render(view, company_labels=True)
     try:
@@ -71,7 +78,9 @@ def _publish_paper_view(path: Path, view: dict, daily: bytes | None, b_version: 
     except ValueError:
         # Published reports may predate company labels, the account dashboard or performance filtering.
         existing = read_artifact(path)
-        if ACCOUNT_POLICY in view["study"]["policy"] and existing == render(view, company_labels=True, legacy_layout=True):
+        if ACCOUNT_POLICY in view["study"]["policy"] and existing in (
+            render(view, company_labels=True, legacy_order_badges=True), render(view, company_labels=True, legacy_layout=True),
+        ):
             return
         if existing != render(view, company_labels=False):
             legacy = {**view, "performance": summarize(view["records"], b_version=b_version, include_empty_retired=True)}
@@ -145,7 +154,7 @@ def run_study(
     for row in records.values():
         row.pop("_indicators", None)
     b_version = B_SHAPE_V1 if evidence["source"]["research_version"] == REFERENCE_V1 else B_VERSION
-    view = {"study": study, "trade_date": str(target), "ledger_sha256": digest,
+    view = {"study": study, "trade_date": str(target), "ledger_sha256": digest, "session_index": len(dates) - 1,
             "source": evidence["source"], "records": records, "performance": summarize(records, b_version=b_version)}
     _publish_paper_view(output / ("report.html" if daily is not None else "paper-report.html"), view, daily, b_version)
     if daily is None:
