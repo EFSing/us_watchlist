@@ -19,7 +19,9 @@ from us_watchlist.domain.company_catalog import issuer_key
 from us_watchlist.domain.paper import ACCOUNT_POLICY, POSITION_PROTOCOL, Mode, Status, check_policy
 from us_watchlist.integrations.github_artifacts import Artifact, GitHubArtifacts, paper_workflow_variables
 from us_watchlist.integrations.paper_bundle import PAPER_PREFIX, verify_bundle
+from us_watchlist.integrations.paper_ledger import study_identity
 from us_watchlist.integrations.xnys import next_session, regular_windows
+from us_watchlist.reporting.paper_html import render_combined_paper, render_paper
 
 ACCOUNT = {
     "max_open_positions": 8, "max_new_entries_per_session": 3, "cooldown_sessions": 5,
@@ -102,6 +104,49 @@ class AccountPolicyTests(PaperTests):
         self.assertEqual(self.reasons(views[T2], T2, T1), {
             "ZETA": ["ALREADY_HOLDING_SYMBOL"], "LLYVK": ["ALREADY_HOLDING_SYMBOL"],
         })
+
+    def test_dashboard_ranks_eligible_orders_and_folds_low_information_events(self):
+        ahr = plan("AHR", 0)
+        ahr["structure_origin"] = {"floor_anchor": "L2", "points": {"L2": [str(START), "98"]}, "known_on": str(START)}
+        disabled = plan("UNUSED")
+        disabled["qualification"] = "B_NUMERIC_REJECTED"
+        first = [ahr, plan("CHE", 1), plan("OGE", 2), plan("MISS"), disabled]
+        for row in first[1:3]:
+            row["structure_origin"] = ahr["structure_origin"]
+        following = [plan("PNR"), plan("GOOG", 1), plan("EG", 0), disabled]
+        view = self.run_account({
+            START: (first, {}),
+            T1: (following, {"AHR": ("100", "103", "96", "97"), "MISS": ("99", "101", "97", "100")}),
+        }, model={"structure_exit": True}, max_new_entries_per_session=2)[T1]
+        combined = render_combined_paper(MARKUP, view).decode()
+        standalone = render_paper(view)
+        for html in (combined, standalone):
+            self.assertIn("2 / 8 仓", html)
+            self.assertIn("预约次日开盘退出</strong> · 收盘确认结构破坏", html)
+            self.assertIn("次日待开盘检查合格委托 · 3 笔", html)
+            self.assertIn("另 1 笔观察组未启用模拟", html)
+            orders = html.split('id="paper-orders"', 1)[1].split('id="paper-activity"', 1)[0]
+            self.assertLess(orders.index(">EG<"), orders.index(">GOOG<"))
+            self.assertLess(orders.index(">GOOG<"), orders.index(">PNR<"))
+            self.assertEqual(orders.count("优先候选"), 2)
+            self.assertNotIn("UNUSED", orders)
+            events, neutral = html.split("展开未触价与未启用明细", 1)
+            self.assertIn("（2 笔）", neutral)
+            self.assertIn("已达到当日新开仓上限", events)
+            self.assertNotIn("开盘价低于触发价", events)
+            self.assertIn("开盘价低于触发价", neutral)
+            self.assertIn("该资格样本未启用", neutral)
+            self.assertNotIn("→ 次日", html)
+            self.assertNotIn(" USD", html)
+
+        # A previously published account report can still be restored byte for byte.
+        study = view["study"]
+        path = self.root / Mode.SYNTHETIC / study_identity(study) / str(T1) / "paper-report.html"
+        self.assertEqual(path.read_bytes(), standalone.encode())
+        old_report = render_paper(view, legacy_layout=True).encode()
+        path.write_bytes(old_report)
+        run_study(self.root, Mode.SYNTHETIC, START, T1, study["policy"], protocol=POSITION_PROTOCOL)
+        self.assertEqual(path.read_bytes(), old_report)
 
     def test_secondary_priority_and_core_only(self):
         first = [

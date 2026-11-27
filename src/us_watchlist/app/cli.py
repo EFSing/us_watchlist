@@ -67,7 +67,7 @@ def main() -> int:
     paper.add_argument("--protocol", choices=(PROTOCOL, POSITION_PROTOCOL))
     paper.add_argument("--mode", choices=("historical-replay", "prospective"), default="historical-replay")
     paper.add_argument("--available-at", type=datetime.fromisoformat, help="UTC availability from the prospective publication receipt")
-    paper.add_argument("--standalone", action="store_true", help="Generate the legacy standalone paper views")
+    paper.add_argument("--standalone", action="store_true", help="Generate a standalone paper report and email summary")
     paper.add_argument("--expect-previous", help="Expected prior ledger SHA-256 from an independent receipt")
     args = parser.parse_args()
 

@@ -27,7 +27,7 @@ def _breadth(value: Breadth) -> str:
     return f'{_pct(value.ratio)} <small>{value.count:,}/{value.sample:,}</small>'
 
 
-def _badge(sector: str, style: str) -> str:
+def style_badge(sector: str, style: str) -> str:
     return f'<span class="style-badge {_STYLE[style]}">{sector} · {style}</span>'
 
 
@@ -45,11 +45,11 @@ def quote_heading(quote: QuoteSummary, heading: str) -> str:
     weight = f'<span class="note">IWB 权重 {quote.market_weight:.2f}%</span>' if quote.market_weight is not None else ""
     return f"""<div class="quote-head">
 <div><{heading}><span class="ticker">{escape(quote.symbol)}</span>{company}</{heading}>{english}
-<div class="quote-labels">{_badge(quote.sector, quote.style)}{weight}</div></div>
+<div class="quote-labels">{style_badge(quote.sector, quote.style)}{weight}</div></div>
 <div class="quote-current"><strong>${quote.close:,.2f}</strong> {_change(quote.daily_change)}{_links(quote.symbol)}</div></div>"""
 
 
-def _table(label: str, headings: tuple[str, ...], body: str, *, extra_class: str = "") -> str:
+def scroll_table(label: str, headings: tuple[str, ...], body: str, *, extra_class: str = "") -> str:
     columns = "".join(f'<th scope="col">{heading}</th>' for heading in headings)
     return (f'<div class="table-scroll {extra_class}" role="region" aria-label="{label}" tabindex="0">'
             f'<table aria-label="{label}"><thead><tr>{columns}</tr></thead>{body}</table></div>')
@@ -72,9 +72,9 @@ def market_pulse(view: Workbench, c_count: int | str, *, b_failed: bool) -> str:
         f'<div><dt>B 形态匹配</dt><dd>{group.b_matches:,} 只</dd></div></dl></article>'
         for group in pulse.styles
     )
-    sectors = "".join(f'<tr><th scope="row">{_badge(group.name, group.style)}</th>{_group_cells(group)}</tr>'
+    sectors = "".join(f'<tr><th scope="row">{style_badge(group.name, group.style)}</th>{_group_cells(group)}</tr>'
                       for group in pulse.sectors)
-    sector_table = _table("板块热度榜", ("板块", "样本", "当日中位", "近 20 日中位", "站上 MA20", "B 匹配"),
+    sector_table = scroll_table("板块热度榜", ("板块", "样本", "当日中位", "近 20 日中位", "站上 MA20", "B 匹配"),
                           f'<tbody>{sectors}</tbody>', extra_class="sector-table")
     leaders = [group.name for group in pulse.sectors if group.daily_median and group.daily_median > 0]
     leading_sectors = "、".join(leaders[:3]) or "无板块中位涨幅为正"
@@ -209,7 +209,7 @@ def _other_table(rows: tuple[BCandidate, ...], version: str) -> str:
             ) if condition
         ]
         badges = _signal_badges(row, version) + "".join(f'<span class="pill">{label}</span>' for label in flags)
-        sector = _badge(quote.sector, quote.style)
+        sector = style_badge(quote.sector, quote.style)
         search = escape(f"{quote.symbol} {quote.name} {quote.english_name} {quote.sector} {' '.join(flags)}".lower())
         fields = (quote.daily_change, row.distance_to_platform, row.risk_to_close, rr, row.retest_ratio)
         sort_data = " ".join(f'data-value-{i}="{value if value is not None else ""}"' for i, value in enumerate(fields))
@@ -225,7 +225,7 @@ data-style="{quote.style}" data-flags="{' '.join(label for label in flags if lab
 {_links(quote.symbol)}{_b_details(row)}</details></td></tr></tbody>""")
     sorts = tuple(f'<button type="button" data-sort="{i}">{label}<span aria-hidden="true"> ↕</span></button>'
                   for i, label in enumerate(("收盘 / 涨跌", "距平台", "止损距离", "计划 RR", "回踩缩量比")))
-    table = _table("其余 B 形态匹配", ("公司", "板块与标记", *sorts, "详情"), "".join(bodies), extra_class="b-candidate-table")
+    table = scroll_table("其余 B 形态匹配", ("公司", "板块与标记", *sorts, "详情"), "".join(bodies), extra_class="b-candidate-table")
     filters = "".join(f'<button type="button" data-filter="{label}" aria-pressed="{str(i == 0).lower()}">{label}</button>'
                       for i, label in enumerate(("全部", "防御", "成长", "周期", "数值门槛通过", "2→3 切换")))
     return f"""<div class="toolbar match-toolbar" hidden><div class="filter-buttons" role="group" aria-label="B 匹配筛选">{filters}</div>
@@ -241,12 +241,12 @@ def b_sections(view: Workbench, diagnostics: str, *, version: str, failed: bool)
                 '<p class="empty">本轮没有满足精选条件的股票。</p>')
     watch = "".join(
         f'<tr><th scope="row">{escape(row.quote.symbol)}<small>{escape(row.quote.name)}</small></th>'
-        f'<td>{_badge(row.quote.sector, row.quote.style)}</td><td class="number">${row.quote.close:,.2f}</td>'
+        f'<td>{style_badge(row.quote.sector, row.quote.style)}</td><td class="number">${row.quote.close:,.2f}</td>'
         f'<td>{_change(row.quote.daily_change)}</td><td class="number">${row.platform:,.2f}</td>'
         f'<td class="number">{_pct(row.distance_to_platform, signed=True)}</td><td>{_pct(row.retest_ratio)}</td>'
         f'<td>{_links(row.quote.symbol)}</td></tr>' for row in view.watch
     )
-    watch_table = _table("待转强预备池", ("公司", "板块·风格", "收盘", "当日涨跌", "平台", "距平台", "回踩均量 / 突破量", "行情"),
+    watch_table = scroll_table("待转强预备池", ("公司", "板块·风格", "收盘", "当日涨跌", "平台", "距平台", "回踩均量 / 突破量", "行情"),
                          f'<tbody>{watch}</tbody>', extra_class="watch-table") if watch else '<p class="empty">本轮无预备池股票。</p>'
     guardrails = "通过 MA50 趋势与峰值回撤检查，" if version == B_US_V2 else ""
     return f"""<section class="panel" id="{version}"><h2>B 观察台</h2>

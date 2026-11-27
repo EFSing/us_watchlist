@@ -7,9 +7,8 @@ from hashlib import sha256
 
 from us_watchlist.domain.paper import (
     ACCOUNT_POLICY, B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
-    Status, cohort, needs_structure,
+    Status, cohort, entry_priority, needs_structure,
 )
-from us_watchlist.domain.replay_research import TRANSITION
 from us_watchlist.tracking.paper_position import PositionIndicators, close_position
 
 # From the reference Paper Tracking position replay. Prices from today's
@@ -198,16 +197,6 @@ def _advance(row: dict, day: dict, policy: dict, admit=None) -> None:
     _mark(row, day, quote, opening, high, low, close)
 
 
-def _entry_priority(row: dict) -> tuple:
-    plan = row["plan"]
-    rank = plan["core_rank"]
-    return (
-        rank is None, rank if rank is not None else 0, not plan["fresh_turn"],
-        plan["structure"]["stage"] != TRANSITION, Decimal(plan["entry_risk"] or "Infinity"),
-        -Decimal(plan["levels"]["rr"]), plan["symbol"], plan["strategy_version"],
-    )
-
-
 def _advance_account(records: dict, day: dict, policy: dict, session_index: int) -> None:
     account = policy[ACCOUNT_POLICY]
     held, cooling = set(), set()
@@ -255,7 +244,7 @@ def _advance_account(records: dict, day: dict, policy: dict, session_index: int)
         new_entries += 1
         return None
 
-    for row in sorted(pending, key=_entry_priority):
+    for row in sorted(pending, key=entry_priority):
         if account["core_only"] and row["plan"]["core_rank"] is None:
             _event(row, day, Status.NOT_FILLED, "OUTSIDE_CORE_SHORTLIST")
             continue

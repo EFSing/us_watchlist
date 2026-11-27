@@ -5,6 +5,7 @@ from enum import StrEnum
 from types import MappingProxyType
 
 from us_watchlist.domain.models import PriceBasis
+from us_watchlist.domain.replay_research import TRANSITION
 from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2, B_VERSIONS
 
 PROTOCOL = "us_iwb_paper_open_v1"
@@ -41,6 +42,17 @@ class Status(StrEnum):
 
 def cohort(plan: dict) -> str:
     return f"{plan['qualification']}:{plan['risk_warning']}"
+
+
+def entry_priority(row: dict) -> tuple:
+    """Single-account order for checking pending plans at the open."""
+    plan = row["plan"]
+    rank = plan["core_rank"]
+    return (
+        rank is None, rank if rank is not None else 0, not plan["fresh_turn"],
+        plan["structure"]["stage"] != TRANSITION, Decimal(plan["entry_risk"] or "Infinity"),
+        -Decimal(plan["levels"]["rr"]), plan["symbol"], plan["strategy_version"],
+    )
 
 
 def valid_archive_strategies(versions: set[str]) -> bool:

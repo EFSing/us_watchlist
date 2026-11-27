@@ -7,7 +7,7 @@ from pathlib import Path
 
 from us_watchlist.app.paper_inputs import load_day
 from us_watchlist.domain.models import require_utc
-from us_watchlist.domain.paper import BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, Mode, check_policy
+from us_watchlist.domain.paper import ACCOUNT_POLICY, BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, Mode, check_policy
 from us_watchlist.domain.replay_research import REFERENCE_V1
 from us_watchlist.domain.screening import B_SHAPE_V1
 from us_watchlist.integrations.local_artifacts import publish_once, read_artifact
@@ -60,20 +60,22 @@ def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
 
 
 def _publish_paper_view(path: Path, view: dict, daily: bytes | None, b_version: str) -> None:
-    def render(projection: dict, *, company_labels: bool) -> bytes:
+    def render(projection: dict, *, company_labels: bool, legacy_layout: bool = False) -> bytes:
         if daily is not None:
-            return render_combined_paper(daily, projection, company_labels=company_labels)
-        return render_paper(projection, company_labels=company_labels).encode("utf-8")
+            return render_combined_paper(daily, projection, company_labels=company_labels, legacy_layout=legacy_layout)
+        return render_paper(projection, company_labels=company_labels, legacy_layout=legacy_layout).encode("utf-8")
 
     body = render(view, company_labels=True)
     try:
         publish_once(path, body)
     except ValueError:
-        # Accept exact bytes from before company labels or the retirement of empty performance rows.
+        # Published reports may predate company labels, the account dashboard or performance filtering.
         existing = read_artifact(path)
+        if ACCOUNT_POLICY in view["study"]["policy"] and existing == render(view, company_labels=True, legacy_layout=True):
+            return
         if existing != render(view, company_labels=False):
             legacy = {**view, "performance": summarize(view["records"], b_version=b_version, include_empty_retired=True)}
-            if existing not in (render(legacy, company_labels=True), render(legacy, company_labels=False)):
+            if existing not in (render(legacy, company_labels=True, legacy_layout=True), render(legacy, company_labels=False)):
                 raise
 
 
