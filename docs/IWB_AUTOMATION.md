@@ -23,7 +23,8 @@
 | `BARK_ENDPOINT` | 既有 Bark 完整 POST 地址，包含所需设备鉴权 |
 
 只有日报状态为 `SUCCESS`、`PARTIAL_COVERAGE` 或已验证归档的 `REUSED_PUBLISHED_REPORT` 时，且本轮所有归档步骤成功，
-才发送中文摘要邮件并附上与 `report.html` 字节相同的完整 HTML 附件。`PARTIAL_COVERAGE` 在邮件主题与正文中明确显示「部分覆盖」。
+才发送中文摘要邮件。默认附件与规范日报 `report.html` 字节相同。启用前瞻账本后发送经校验的
+`combined-report.html`，纯文本与 HTML 正文均附单账户摘要。`PARTIAL_COVERAGE` 在邮件主题与正文中明确显示「部分覆盖」。
 同一交易日手动补跑若复用归档，仍会再发送一次邮件，便于补发；正式日报身份及行情不会重复生成。
 定时作业复用归档时只校验已有产物。归档成功后若邮件失败，按手动补跑流程补发。
 未配置 SMTP、邮件验证或发送失败均使本次运行失败，原已发布的私有日报归档仍保留。
@@ -125,6 +126,7 @@ systemd-run --wait --pipe --collect \
 | --- | ---: | --- |
 | `us-iwb-v1-pool-YYYY-MM-DD` | 90 天 | 不可变官方 CSV、成份日期、来源、获取 UTC 与 SHA |
 | `us-iwb-v1-daily-YYYY-MM-DD` | 30 天 | 股票池、Yahoo ZIP、输入清单、运行收据、单文件 HTML |
+| `us-iwb-v1-paper-YYYY-MM-DD` | 90 天 | 研究配置、连续每日账本、合成 HTML、摘要、SHA-256 收据 |
 | `us-iwb-attempt-<run_id>-<run_attempt>` | 7 天 | 流程状态、成功报告引用、失败轮次的可用输入和诊断 |
 
 新设备可从 **Actions** 对应运行下载产物。将 IWB 版本解包至 `.runtime/data/iwb/`，将日报解包至 `.runtime/data/iwb-daily/<date>/`，校验后打开 `report.html`。
@@ -137,6 +139,25 @@ us-watchlist iwb-verify --trade-date 2026-11-18 --directory .runtime/data/iwb-da
 每次恢复以 [仓库变量实际值](https://github.com/EFSing/us_watchlist/settings/variables/actions) 和
 [日报工作流状态](https://github.com/EFSing/us_watchlist/actions/workflows/iwb-daily.yml) 为准。
 [GitHub 产物保留说明](https://docs.github.com/en/actions/how-tos/manage-workflow-runs/remove-workflow-artifacts)
+
+## 启用前瞻单账户模拟
+
+1. PR-3 合并且对应 `main` CI 通过后，进入本仓库 **Settings → Secrets and variables → Actions → Variables**。
+   在 **Repository variables** 下创建 `US_IWB_PAPER_START_DATE`，填写首个拟纳入的纽约 XNYS 会话日期，
+   格式为 `YYYY-MM-DD`。如使用已完成日期，该日至目标日的每一份尚未进入账本的规范日报均须仍可恢复。
+2. 创建 `US_IWB_PAPER_ENABLED` 并设置为小写 `true`。确认两变量的值。开关缺失、为 `false`、
+   缺少起始日期或目标日期早于起始日期时，继续原日报流程。
+3. 首轮运行成功后核对规范日报仍为 6 个文件，另有同日期 `us-iwb-v1-paper-YYYY-MM-DD`。
+   在伴随归档校验收据的研究 ID、账本头、规范日报和合成 HTML SHA-256。
+   在邮件检查模拟摘要、持仓代码／中文名／浮动 R 和合成附件。再核对下一交易日的账本前序摘要。
+4. 补跑使用现有 **Run workflow** 手动入口。先查同日期已有伴随归档，核验后复用并允许手动补发。
+   若缺伴随归档，恢复目标日以前最近的账本，再按 XNYS 顺序使用规范日报补齐。中间会话没有可验证的日报时，
+   账本和邮件步骤失败并触发故障告警，当次已核验的新规范日报仍可发布。定时运行复用既有归档时保留原有邮件去重。
+5. 暂停时将 `US_IWB_PAPER_ENABLED` 设为 `false`。恢复时使用同一起始日期和政策，补齐缺少的规范日报。
+   伴随归档的未压缩内容上限为 32 MiB。保留期外的恢复需取得独立私有备份。
+
+账本由现有串行发布组管理。Actions 令牌保持 `actions: read` 和 `contents: read`。
+仓位与邮件状态保存在私有运行产物和诊断。模拟无真实委托，策略及止损口径见 [单账户规则](IWB_PAPER.md#美股-b-v2-单账户模拟)。
 
 ## 长期前瞻研究证据
 

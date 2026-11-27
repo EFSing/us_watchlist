@@ -92,7 +92,7 @@ def close_position(position: dict, indicators: PositionIndicators, day: dict, pr
     model = position["exit_model"]
     if not any(model[key] for key in ("structure_exit", "atr_trail", "profit_protection")):
         return "CLOSE_MARK"
-    observed = day["source"]["observed_at"]
+    observed = day["source"].get("available_at", day["source"]["observed_at"])
     if datetime.fromisoformat(observed) >= datetime.fromisoformat(day["next_opens_at"]):
         return "LATE_CLOSE_EVIDENCE"
 

@@ -9,6 +9,7 @@ from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2, B_VERSIONS
 
 PROTOCOL = "us_iwb_paper_open_v1"
 POSITION_PROTOCOL = "us_iwb_paper_position_v2"
+ACCOUNT_POLICY = "_account"
 C_BALANCED = "us_c_trend_pullback_balanced_a_v1"
 C_CONSERVATIVE = "us_c_trend_pullback_conservative_b_v1"
 STRATEGIES = {
@@ -98,9 +99,20 @@ def check_policy(policy: dict, protocol: str = PROTOCOL) -> None:
         raise ValueError("PAPER_UNSUPPORTED_PROTOCOL")
     if not isinstance(policy, dict) or not all(isinstance(cohorts, dict) for cohorts in policy.values()):
         raise ValueError("PAPER_INVALID_POLICY")
-    if set(policy) - (B_VERSIONS | {C_BALANCED}):
+    strategies = B_VERSIONS | {C_BALANCED}
+    if protocol == POSITION_PROTOCOL:
+        strategies |= {ACCOUNT_POLICY}
+    if set(policy) - strategies:
         raise ValueError("PAPER_UNKNOWN_POLICY_STRATEGY")
     for version, cohorts in policy.items():
+        if version == ACCOUNT_POLICY:
+            limits = {"max_open_positions": 1, "max_new_entries_per_session": 1, "cooldown_sessions": 0}
+            switches = {"deduplicate_issuer", "core_only"}
+            if (set(cohorts) != limits.keys() | switches
+                    or any(type(cohorts[key]) is not int or cohorts[key] < minimum for key, minimum in limits.items())
+                    or any(type(cohorts[key]) is not bool for key in switches)):
+                raise ValueError("PAPER_INVALID_ACCOUNT_POLICY")
+            continue
         qualifications = ("B_NUMERIC_QUALIFIED", "B_NUMERIC_REJECTED") if version in B_VERSIONS else ("C_PRICE_RESEARCH",)
         allowed = {f"{qualification}:{risk}" for qualification in qualifications for risk in (
             ("UNKNOWN",) if version in B_VERSIONS else ("WARNING", "CLEAR")

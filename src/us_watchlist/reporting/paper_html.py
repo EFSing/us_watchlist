@@ -4,8 +4,9 @@ from decimal import Decimal
 from html import escape
 
 from us_watchlist.domain.company_catalog import catalog_sector_style, company_name
-from us_watchlist.domain.paper import POSITION_PROTOCOL, STRATEGY_LABELS, Mode, Status
+from us_watchlist.domain.paper import ACCOUNT_POLICY, POSITION_PROTOCOL, STRATEGY_LABELS, Mode, Status
 from us_watchlist.domain.screening import B_SHAPE_V1
+from us_watchlist.reporting.replay_labels import REASON as SCREENING_REASON
 
 _LABELS = {
     **STRATEGY_LABELS, Status.PENDING: "待开盘检查", Status.NOT_FILLED: "未成交",
@@ -18,6 +19,11 @@ _LABELS = {
     "POLICY_UNSET": "模拟资格未配置", "NO_REFERENCE_LEVELS": "参考价位缺失",
     "PLAN_CREATED": "新建计划", "FILLED_AT_T1_OPEN": "T+1 开盘模拟成交",
     "COHORT_NOT_ENABLED": "该资格样本未启用",
+    "OUTSIDE_CORE_SHORTLIST": "未列入日报核心精选",
+    "ALREADY_HOLDING_SYMBOL": "已有同股或同发行人持仓",
+    "RECENT_EXIT_COOLDOWN": "同股或同发行人仍在平仓冷却期",
+    "MAX_OPEN_POSITIONS_REACHED": "已达到持仓上限",
+    "DAILY_NEW_ENTRY_LIMIT_REACHED": "已达到当日新开仓上限",
     "OPEN_AT_OR_BELOW_STOP": "开盘价达到或跌破止损", "OPEN_BELOW_TRIGGER": "开盘价低于触发价",
     "OPEN_AT_OR_ABOVE_TARGET": "开盘价达到或超过目标", "ENTRY_POLICY_UNSET": "入场条件待确认",
     "OPEN_ABOVE_CONFIGURED_PREMIUM": "开盘溢价超过配置上限",
@@ -172,13 +178,15 @@ def _position(row: dict, *, company_labels: bool) -> str:
         low = state.get("protected_low")
         if low is not None:
             stop_facts += (("最近确认结构低点", _fmt(low["price"], " USD") + " · " + escape(low["confirmed_on"])),)
+    structure = state["structure"]
+    structure_label = escape(SCREENING_REASON[structure]) if "issuer_key" in plan and structure in SCREENING_REASON else _label(structure)
     facts = _facts((
         ("模拟入场日", escape(state["entry_date"])), ("实际入场 RR", _fmt(state["initial_rr"])),
         ("入场价", _fmt(state["entry"], " USD")), ("最新价", _fmt(state["latest_price"], " USD")),
         *stop_facts, ("参考目标", _fmt(plan["levels"]["target"], " USD")),
         ("浮动盈亏 / 单位", _fmt(state["pnl_per_unit"], " USD") + " · " + _percent(state["return"])),
         ("浮动 R", _fmt(state["r"], "R")), ("MFE / MAE", f'{_fmt(state["mfe_r"], "R")} / {_fmt(state["mae_r"], "R")}'),
-        ("最近有效估值", escape(state["priced_on"])), ("当前结构观察", _label(state["structure"])),
+        ("最近有效估值", escape(state["priced_on"])), ("当前结构观察", structure_label),
         ("目标里程碑", "已观察到" if state["target_seen"] else "尚未确认"),
     ))
     return (f'<article class="card"><h3>{_name(plan, company_labels=company_labels)}</h3><p class="small">{_qualification(plan)}</p>'
@@ -248,6 +256,38 @@ def paper_mail_text(view: dict) -> str:
     )
 
 
+def account_mail_text(view: dict) -> str:
+    positions, pending, activity = _sections(view)
+    closed = [Decimal(row["position"]["r"]) for row in view["records"].values() if row["status"] == Status.CLOSED]
+    win_rate = f"{sum(value > 0 for value in closed) / len(closed):.1%}" if closed else "—"
+    filled = sum(event["reason"] == "FILLED_AT_T1_OPEN" for _, event in activity)
+    exited = sum(event["status"] == Status.CLOSED for _, event in activity)
+    lines = [f"当前持仓 {len(positions)} 只 · 待检查 {len(pending)} 笔",
+             f"当日成交 {filled} 笔 · 退出 {exited} 笔",
+             f"累计胜率 {win_rate} · 已实现 {sum(closed, Decimal(0)):+.2f} R"]
+    for row in sorted(positions, key=lambda item: item["plan"]["symbol"]):
+        symbol = row["plan"]["symbol"]
+        stale = "（估值停更）" if row.get("suspended_at") else ""
+        lines.append(f"{symbol} {company_name(symbol)} {Decimal(row['position']['r']):+.2f} R{stale}")
+    return "\n".join(lines) + "\n"
+
+
+def _mode_label(study: dict) -> str:
+    mode = {
+        Mode.HISTORICAL_REPLAY: "冻结日报历史复算",
+        Mode.SYNTHETIC: "合成数据验证",
+        Mode.PROSPECTIVE: "前瞻单账户模拟跟踪",
+    }[study["mode"]]
+    account = study["policy"].get(ACCOUNT_POLICY)
+    if account is None:
+        return mode
+    deduplication = "同发行人去重" if account["deduplicate_issuer"] else "同股去重"
+    core = " · 限核心精选" if account["core_only"] else ""
+    account_label = deduplication if study["mode"] == Mode.PROSPECTIVE else f"单账户 · {deduplication}"
+    return (f"{mode} · {account_label} · 上限 {account['max_open_positions']} 仓 · "
+            f"单日最多新开 {account['max_new_entries_per_session']} 仓 · 平仓冷却 {account['cooldown_sessions']} 个交易日{core}")
+
+
 def _paper_sections(view: dict, *, combined: bool = False, company_labels: bool = True) -> str:
     study = view["study"]
     positions, pending, activity = _sections(view)
@@ -279,14 +319,16 @@ def _paper_sections(view: dict, *, combined: bool = False, company_labels: bool 
 <th scope="col">平均 R</th><th scope="col">累计 R</th><th scope="col">持有 / 待查 / 未成交 / 缺证</th></tr></thead>
 <tbody>{rows}</tbody></table>"""
     notes = '<p>形态和资格用于研究。价格以 USD 计，每个策略和信号为一个模拟单位，展示毛收益。</p>'
+    availability = (("日报可用时间（UTC）", escape(source["available_at"])),) if "available_at" in source else ()
     audit = _facts((
         ("原日报标识", escape(source["report_id"])), ("原日报 SHA-256", escape(source["report_sha256"])),
         ("账本 SHA-256", escape(view["ledger_sha256"])), ("模拟协议", escape(study["protocol"])),
-        ("日报采集时间（UTC）", escape(source["observed_at"])), ("研究版本", escape(source["research_version"])),
+        ("日报采集时间（UTC）", escape(source["observed_at"])), *availability,
+        ("研究版本", escape(source["research_version"])),
     ))
 
     if combined:
-        mode = "冻结日报历史复算" if study["mode"] == Mode.HISTORICAL_REPLAY else "合成数据验证"
+        mode = _mode_label(study)
         return f"""<section id="paper-research" class="panel" aria-labelledby="paper-heading">
 <div class="section-head"><div><h2 id="paper-heading">模拟持仓</h2><p class="section-note">{mode}</p></div></div>
 <div class="metrics">{metrics}</div>
@@ -314,7 +356,7 @@ def _paper_sections(view: dict, *, combined: bool = False, company_labels: bool 
 
 def render_paper(view: dict, *, company_labels: bool = True) -> str:
     day, study = view["trade_date"], view["study"]
-    mode = "冻结日报历史复算" if study["mode"] == Mode.HISTORICAL_REPLAY else "合成数据验证"
+    mode = _mode_label(study)
     return f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>研究模拟持仓 · {day}</title><style>{_STYLES}</style></head><body>

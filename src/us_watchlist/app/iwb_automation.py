@@ -7,9 +7,11 @@ from pathlib import Path
 from us_watchlist.app.iwb_daily import (
     PUBLISHABLE, REPORT_FILES, RETRYABLE_COVERAGE, encode_receipt, observe_iwb, update_pool, verify_completed,
 )
+from us_watchlist.app.iwb_paper_automation import DEFAULT_PAPER_POLICY, roll_paper
 from us_watchlist.integrations.github_artifacts import GitHubArtifacts
 from us_watchlist.integrations.iwb_holdings import MAX_AGE_DAYS, read_holdings
 from us_watchlist.integrations.local_artifacts import publish_once
+from us_watchlist.integrations.paper_bundle import PAPER_PREFIX
 from us_watchlist.integrations.xnys import (
     completed_session, is_session, new_york_date, new_york_wall_time, regular_windows,
 )
@@ -96,9 +98,22 @@ def _prepare_pool(
 def _execute(
     archive: GitHubArtifacts, workspace: Path, target: date, holdings_date: date | None,
     current: bool, code_sha: str, state: dict, outputs: dict[str, str], *, scheduled: bool,
+    paper_start: date | None = None, paper_policy_path: Path = DEFAULT_PAPER_POLICY,
 ) -> str:
     catalog = archive.catalog()
     name = DAILY_PREFIX + target.isoformat()
+
+    def publish_paper(directory: Path, run: dict, available_at: datetime | None) -> None:
+        bundle, receipt, created = roll_paper(
+            archive, catalog, workspace, paper_start, target, paper_policy_path, canonical=directory,
+            report_sha256=run["report_sha256"], available_at=available_at, daily_prefix=DAILY_PREFIX,
+        )
+        state["paper"] = {**receipt, "reused": not created}
+        if created:
+            outputs.update(paper_name=PAPER_PREFIX + str(target), paper_dir=str(bundle))
+        if "email_report_dir" in outputs:
+            outputs["paper_bundle_dir"] = str(bundle)
+
     if name in catalog:
         existing = catalog[name]
         restored = workspace / "restored"
@@ -109,6 +124,8 @@ def _execute(
         state["existing_report"] = {"run_id": existing.run_id, "report_sha256": previous["report_sha256"]}
         if not scheduled:
             outputs["email_report_dir"] = str(restored)
+        if paper_start is not None and (not scheduled or PAPER_PREFIX + str(target) in catalog):
+            publish_paper(restored, previous, existing.created_at)
         return "REUSED_PUBLISHED_REPORT"
 
     pool = workspace / "pool"
@@ -129,10 +146,12 @@ def _execute(
             record["status"] = "SKIPPED_SCHEDULE_EXPIRED"
             return record["status"]
         if outcome in PUBLISHABLE:
-            verify_completed(output, target)
+            verified = verify_completed(output, target)
             record["report_sha256"] = run["report_sha256"]
             outputs.pop(f"diagnostic_attempt_{attempt}")
             outputs.update({"report_name": name, "report_dir": str(output), "email_report_dir": str(output)})
+            if paper_start is not None:
+                publish_paper(output, verified, datetime.now(UTC))
             return outcome
         if outcome not in RETRYABLE_COVERAGE or attempt == 2:
             return outcome
@@ -143,6 +162,7 @@ def _execute(
 def automate_iwb(
     workspace: Path, archive: GitHubArtifacts, code_sha: str, *, scheduled: bool,
     trade_date: date | None = None, holdings_date: date | None = None, vps_trade_date: date | None = None,
+    paper_enabled: bool = False, paper_start_date: date | None = None, paper_policy_path: Path = DEFAULT_PAPER_POLICY,
 ) -> tuple[dict, dict[str, str]]:
     now = datetime.now(UTC)
     trigger = "schedule" if scheduled else "workflow_dispatch"
@@ -167,9 +187,10 @@ def automate_iwb(
             day, skip = _manual_target(now, trade_date), None
         state["trade_date"] = day.isoformat()
         outputs["target"] = day.isoformat()
+        paper_start = paper_start_date if paper_enabled and paper_start_date is not None and day >= paper_start_date else None
         state["status"] = skip or _execute(
             archive, workspace, day, holdings_date, day == completed_session(now), code_sha, state, outputs,
-            scheduled=automatic,
+            scheduled=automatic, paper_start=paper_start, paper_policy_path=paper_policy_path,
         )
     except (OSError, KeyError, TypeError, ValueError, ArithmeticError) as error:
         state["status"] = "FAILED"
