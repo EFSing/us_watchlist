@@ -55,6 +55,8 @@ jobs:
           REQUESTED_TRADE_DATE: ${{ inputs.trade_date }}
           REQUESTED_HOLDINGS_DATE: ${{ inputs.holdings_date }}
           VPS_TRADE_DATE: ${{ inputs.vps_trade_date }}
+          US_IWB_PAPER_ENABLED: ${{ vars.US_IWB_PAPER_ENABLED }}
+          US_IWB_PAPER_START_DATE: ${{ vars.US_IWB_PAPER_START_DATE }}
         shell: bash
         run: |
           args=()
@@ -75,13 +77,21 @@ jobs:
           retention-days: 90
           compression-level: 0
       - name: Publish the canonical B+C observation
-        if: ${{ success() && steps.daily.outputs.report_dir != '' }}
+        if: ${{ !cancelled() && steps.daily.outputs.report_dir != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: ${{ steps.daily.outputs.report_name }}
           path: ${{ steps.daily.outputs.report_dir }}/
           if-no-files-found: error
           retention-days: 30
+      - name: Publish the rolling paper ledger
+        if: ${{ success() && steps.daily.outputs.paper_dir != '' }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: ${{ steps.daily.outputs.paper_name }}
+          path: ${{ steps.daily.outputs.paper_dir }}/
+          if-no-files-found: error
+          retention-days: 90
       - name: Preserve attempt state and failed evidence
         if: ${{ !cancelled() && steps.daily.outputs.diagnostic_receipt != '' }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -98,6 +108,7 @@ jobs:
         env:
           IWB_EMAIL_DIR: ${{ steps.daily.outputs.email_report_dir }}
           IWB_TRADE_DATE: ${{ steps.daily.outputs.target }}
+          IWB_PAPER_BUNDLE_DIR: ${{ steps.daily.outputs.paper_bundle_dir }}
           SMTP_HOST: ${{ secrets.SMTP_HOST }}
           SMTP_PORT: ${{ secrets.SMTP_PORT }}
           SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
@@ -105,7 +116,11 @@ jobs:
           SMTP_FROM: ${{ secrets.SMTP_FROM }}
           SMTP_TO: ${{ secrets.SMTP_TO }}
           SMTP_USE_TLS: ${{ secrets.SMTP_USE_TLS }}
-        run: us-watchlist iwb-email --directory "$IWB_EMAIL_DIR" --trade-date "$IWB_TRADE_DATE"
+        shell: bash
+        run: |
+          args=()
+          if [[ -n "$IWB_PAPER_BUNDLE_DIR" ]]; then args+=(--paper-bundle "$IWB_PAPER_BUNDLE_DIR"); fi
+          us-watchlist iwb-email --directory "$IWB_EMAIL_DIR" --trade-date "$IWB_TRADE_DATE" "${args[@]}"
 
   notify-failure:
     if: ${{ always() && needs.daily.result == 'failure' }}

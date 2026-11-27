@@ -1,15 +1,17 @@
 """Build the ledger's point-in-time input from one immutable IWB observation."""
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from pathlib import Path
 
 from us_watchlist.app.iwb_daily import verify_completed
-from us_watchlist.domain.paper import BASIS, B_VERSIONS, cohort, seed_sessions, valid_archive_strategies
+from us_watchlist.domain.company_catalog import issuer_key
+from us_watchlist.domain.paper import ACCOUNT_POLICY, BASIS, B_VERSIONS, cohort, seed_sessions, valid_archive_strategies
 from us_watchlist.domain.replay_research import UNCONFIRMED, VOLUME_FIELDS
 from us_watchlist.integrations.iwb_holdings import read_holdings
 from us_watchlist.integrations.local_artifacts import read_artifact
 from us_watchlist.integrations.paper_archive import quote_prices, read_report_records
+from us_watchlist.integrations.report_metadata import read_core_candidates
 from us_watchlist.integrations.xnys import next_session, regular_windows
 from us_watchlist.integrations.yahoo_chart import read_yahoo
 from us_watchlist.market_data.quality import regular_history
@@ -77,7 +79,9 @@ def _structure_origin(row: dict, evaluation: dict, signal_date: str) -> dict | N
     return {"floor_anchor": floor, "points": points, "known_on": signal_date}
 
 
-def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positions=False) -> tuple[list[dict], dict]:
+def _screening(
+    run: dict, records: dict, listed: tuple[str, ...], *, with_positions=False, issuers=None, core_ranks=None,
+) -> tuple[list[dict], dict]:
     versions = set(run["strategies"])
     if (not valid_archive_strategies(versions)
             or versions != records.keys() - {"record-input", "record-research"}):
@@ -123,6 +127,17 @@ def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positi
                 plan["breakout_date"] = metrics.get("Breakout date")
                 plan["platform"] = metrics.get("Platform")
                 plan["reference_stop_support"] = dict(row["trade"]["inputs"]).get("support")
+            if issuers is not None:
+                levels = plan["levels"]
+                risk = None
+                if levels is not None:
+                    entry = Decimal(levels["entry"])
+                    risk = str((entry - Decimal(levels["stop"])) / entry)
+                plan.update(
+                    issuer_key=issuers[plan["symbol"]], entry_risk=risk,
+                    core_rank=core_ranks.get(plan["symbol"]) if plan["strategy_version"] in B_VERSIONS else None,
+                    fresh_turn=evaluation["structure"].get("Fresh turn", True) is True,
+                )
         output.append(plan)
     return output, grid
 
@@ -148,14 +163,22 @@ def _seed_prices(history, candidates: list[dict], policy: dict) -> dict:
     return {symbol: list(reversed(bars)) for symbol, bars in sorted(seeds.items())}
 
 
-def load_day(directory: Path, target: date, tracking_symbols: set[str], *, position_policy: dict | None = None) -> dict:
+def load_day(
+    directory: Path, target: date, tracking_symbols: set[str], *,
+    position_policy: dict | None = None, available_at: datetime | None = None,
+) -> dict:
     run = verify_completed(directory, target)
-    records = read_report_records(read_artifact(directory / "report.html"), run["report_sha256"])
+    report = read_artifact(directory / "report.html")
+    records = read_report_records(report, run["report_sha256"])
     pool = read_holdings(directory / "holdings.zip").snapshot
     symbols = tuple(sorted(member.symbol for member in pool.members if member.active))
+    account_enabled = position_policy is not None and ACCOUNT_POLICY in position_policy
+    require_yahoo_close = run.get("require_yahoo_close", False) or (
+        account_enabled and "yahoo_target_close_confirmation" in run
+    )
     history, observed, calendar, diagnostics = read_yahoo(
         read_artifact(directory / "yahoo.zip"), run["yahoo_zip_sha256"], target, symbols, pool.provenance,
-        official_iwb=True, require_target_close=run.get("require_yahoo_close", False),
+        official_iwb=True, require_target_close=require_yahoo_close,
     )
     if ((observed.isoformat(), calendar, history[-1].session.closes_at.isoformat(), len(history)) !=
         (run["observed_at"], run["calendar"], run["session_close_utc"], run["history_sessions"])):
@@ -168,7 +191,16 @@ def load_day(directory: Path, target: date, tracking_symbols: set[str], *, posit
         run["listed_equities"], run["target_bars"], run["missing_target_bars"],
     ):
         raise ValueError("PAPER_TARGET_COVERAGE_MISMATCH")
-    candidates, grid = _screening(run, records, symbols, with_positions=position_policy is not None)
+    issuers = core_ranks = None
+    if account_enabled:
+        issuers = {member.symbol: issuer_key(member.symbol, member.english_name) for member in pool.members}
+        core = read_core_candidates(report)
+        core_ranks = {symbol: rank for rank, (symbol, _, _) in enumerate(core)}
+        if len(core_ranks) != len(core) or core_ranks.keys() - issuers.keys():
+            raise ValueError("PAPER_CORE_SHORTLIST_MISMATCH")
+    candidates, grid = _screening(
+        run, records, symbols, with_positions=position_policy is not None, issuers=issuers, core_ranks=core_ranks,
+    )
 
     previous, current = map(quote_prices, history[-2:])
     gaps = dict(diagnostics)
@@ -180,6 +212,8 @@ def load_day(directory: Path, target: date, tracking_symbols: set[str], *, posit
     )}
     source.update(price_basis=BASIS, research_version=records["record-research"]["version"],
                   reference_commit=records["record-research"]["reference_commit"])
+    if available_at is not None:
+        source["available_at"] = available_at.isoformat()
     day = {
         "trade_date": target.isoformat(), "opens_at": history[-1].session.opens_at.isoformat(),
         "next_session": next_session(target).isoformat(), "source": source, "candidates": candidates,

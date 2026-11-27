@@ -1,0 +1,23 @@
+{
+  "us_breakout_retest_v2": {
+    "B_NUMERIC_QUALIFIED:UNKNOWN": {
+      "min_actual_rr": "1.8",
+      "min_target_upside": "0.04",
+      "max_open_premium": "0.03",
+      "exit_model": {
+        "reject_open_at_or_below_structure": true,
+        "structure_exit": true,
+        "pivot": {"radius": 2, "min_separation": 3, "require_rebound": true},
+        "atr_trail": {"period": 14, "multiple": "0.5"},
+        "profit_protection": {"trigger_r": "2", "giveback_r": "1"}
+      }
+    }
+  },
+  "_account": {
+    "max_open_positions": 8,
+    "max_new_entries_per_session": 3,
+    "cooldown_sessions": 5,
+    "deduplicate_issuer": true,
+    "core_only": false
+  }
+}

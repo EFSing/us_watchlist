@@ -6,8 +6,8 @@ from decimal import Decimal
 from hashlib import sha256
 
 from us_watchlist.domain.paper import (
-    B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
-    Status, cohort, needs_structure,
+    ACCOUNT_POLICY, B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
+    Status, cohort, entry_priority, needs_structure,
 )
 from us_watchlist.tracking.paper_position import PositionIndicators, close_position
 
@@ -142,7 +142,7 @@ def _mark(row: dict, day: dict, quote: dict, opening: Decimal, high: Decimal, lo
     _event(row, day, status, reason, position=position, **details)
 
 
-def _advance(row: dict, day: dict, policy: dict) -> None:
+def _advance(row: dict, day: dict, policy: dict, admit=None) -> None:
     plan = row["plan"]
     pending = row["status"] == Status.PENDING
     quote = day["quotes"][plan["symbol"]]
@@ -169,6 +169,11 @@ def _advance(row: dict, day: dict, policy: dict) -> None:
     opening, high, low, close = map(Decimal, current)
     if pending:
         status, reason, facts = _open_check(plan, opening, policy)
+        if status == Status.OPEN and admit is not None:
+            denied = admit(plan)
+            if denied:
+                status, reason = Status.NOT_FILLED, denied
+                del facts["exit_model"]
         _event(row, day, status, reason, **facts)
         if status != Status.OPEN:
             return
@@ -192,10 +197,71 @@ def _advance(row: dict, day: dict, policy: dict) -> None:
     _mark(row, day, quote, opening, high, low, close)
 
 
-def apply_day(records: dict, day: dict, study_id: str, policy: dict, protocol: str = PROTOCOL) -> None:
+def _advance_account(records: dict, day: dict, policy: dict, session_index: int) -> None:
+    account = policy[ACCOUNT_POLICY]
+    held, cooling = set(), set()
+    occupied = new_entries = 0
+    pending = []
+
+    def identities(plan):
+        keys = {("symbol", plan["symbol"])}
+        if account["deduplicate_issuer"]:
+            keys.add(("issuer", plan["issuer_key"]))
+        return keys
+
+    for row in records.values():
+        if row["status"] == Status.PENDING:
+            pending.append(row)
+            continue
+        intraday_exit = False
+        if row["status"] == Status.OPEN:
+            _advance(row, day, policy)
+            if row["status"] == Status.CLOSED:
+                row["exit_session_index"] = session_index
+                intraday_exit = row["position"]["exit_reason"] == "ACTIVE_STOP_TOUCHED"
+        # Intraday exits free a slot at the close. At the open, only
+        # scheduled exits and gap-through stops have already freed slots.
+        if row["status"] == Status.OPEN or intraday_exit:
+            held.update(identities(row["plan"]))
+            occupied += 1
+        elif (row["status"] == Status.CLOSED and account["cooldown_sessions"]
+              and session_index - row["exit_session_index"] <= account["cooldown_sessions"]):
+            cooling.update(identities(row["plan"]))
+
+    def admit(plan):
+        nonlocal occupied, new_entries
+        keys = identities(plan)
+        if keys & held:
+            return "ALREADY_HOLDING_SYMBOL"
+        if keys & cooling:
+            return "RECENT_EXIT_COOLDOWN"
+        if occupied >= account["max_open_positions"]:
+            return "MAX_OPEN_POSITIONS_REACHED"
+        if new_entries >= account["max_new_entries_per_session"]:
+            return "DAILY_NEW_ENTRY_LIMIT_REACHED"
+        held.update(keys)
+        occupied += 1
+        new_entries += 1
+        return None
+
+    for row in sorted(pending, key=entry_priority):
+        if account["core_only"] and row["plan"]["core_rank"] is None:
+            _event(row, day, Status.NOT_FILLED, "OUTSIDE_CORE_SHORTLIST")
+            continue
+        _advance(row, day, policy, admit)
+        if row["status"] == Status.CLOSED:
+            row["exit_session_index"] = session_index
+
+
+def apply_day(
+    records: dict, day: dict, study_id: str, policy: dict, protocol: str = PROTOCOL, *, session_index: int = 0,
+) -> None:
     """Advance exact successive sessions before adding newly discovered plans."""
-    for row in active_plans(records):
-        _advance(row, day, policy)
+    if ACCOUNT_POLICY in policy:
+        _advance_account(records, day, policy, session_index)
+    else:
+        for row in active_plans(records):
+            _advance(row, day, policy)
     for candidate in day["candidates"]:
         symbol, version = candidate["symbol"], candidate["strategy_version"]
         plan_id = sha256(f"{study_id}/{day['trade_date']}/{version}/{symbol}".encode()).hexdigest()
@@ -203,7 +269,7 @@ def apply_day(records: dict, day: dict, study_id: str, policy: dict, protocol: s
             raise ValueError(f"PAPER_PLAN_IDENTITY_CONFLICT {plan_id}")
         plan = {
             **candidate, "plan_id": plan_id, "signal_date": day["trade_date"], "expected_entry": day["next_session"],
-            "created_at": day["source"]["observed_at"], "source": day["source"],
+            "created_at": day["source"].get("available_at", day["source"]["observed_at"]), "source": day["source"],
             "anchor": day["quotes"][symbol]["current"],
         }
         if protocol == POSITION_PROTOCOL:

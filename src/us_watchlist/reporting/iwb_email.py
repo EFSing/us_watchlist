@@ -6,7 +6,9 @@ from us_watchlist.domain.paper import C_BALANCED, STRATEGIES
 from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2
 
 
-def render_email_summary(report: dict, *, core: tuple[tuple[str, str, str], ...] = ()) -> tuple[str, str, str]:
+def render_email_summary(
+    report: dict, *, core: tuple[tuple[str, str, str], ...] = (), paper_summary: str = "",
+) -> tuple[str, str, str]:
     day = report["trade_date"]
     status = "部分覆盖" if report["status"] == "PARTIAL_COVERAGE" else "完成"
     strategies = report["strategies"]
@@ -42,4 +44,8 @@ def render_email_summary(report: dict, *, core: tuple[tuple[str, str, str], ...]
         f'<table style="border-collapse:collapse">{html_rows}</table>'
         f'<p>{escape(footer)}</p></div>'
     )
+    if paper_summary:
+        plain += f"\n单账户模拟持仓摘要\n{paper_summary}"
+        lines = "<br>".join(escape(line) for line in paper_summary.splitlines())
+        html_body = f"{html_body.removesuffix('</div>')}<h3>单账户模拟持仓摘要</h3><p>{lines}</p></div>"
     return f"美股 IWB B+C 研究日报｜{day}｜{status}", plain, html_body

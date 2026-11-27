@@ -1,13 +1,13 @@
-"""Run or restore a research ledger without changing any production entry point."""
+"""Run or restore a research ledger from verified IWB daily evidence."""
 
 import json
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from hashlib import sha256
 from pathlib import Path
 
 from us_watchlist.app.paper_inputs import load_day
 from us_watchlist.domain.models import require_utc
-from us_watchlist.domain.paper import BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, Mode, check_policy
+from us_watchlist.domain.paper import ACCOUNT_POLICY, BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, Mode, check_policy
 from us_watchlist.domain.replay_research import REFERENCE_V1
 from us_watchlist.domain.screening import B_SHAPE_V1
 from us_watchlist.integrations.local_artifacts import publish_once, read_artifact
@@ -60,20 +60,22 @@ def _combined_source(root: Path, expected: str, report: bytes | None) -> bytes:
 
 
 def _publish_paper_view(path: Path, view: dict, daily: bytes | None, b_version: str) -> None:
-    def render(projection: dict, *, company_labels: bool) -> bytes:
+    def render(projection: dict, *, company_labels: bool, legacy_layout: bool = False) -> bytes:
         if daily is not None:
-            return render_combined_paper(daily, projection, company_labels=company_labels)
-        return render_paper(projection, company_labels=company_labels).encode("utf-8")
+            return render_combined_paper(daily, projection, company_labels=company_labels, legacy_layout=legacy_layout)
+        return render_paper(projection, company_labels=company_labels, legacy_layout=legacy_layout).encode("utf-8")
 
     body = render(view, company_labels=True)
     try:
         publish_once(path, body)
     except ValueError:
-        # Accept exact bytes from before company labels or the retirement of empty performance rows.
+        # Published reports may predate company labels, the account dashboard or performance filtering.
         existing = read_artifact(path)
+        if ACCOUNT_POLICY in view["study"]["policy"] and existing == render(view, company_labels=True, legacy_layout=True):
+            return
         if existing != render(view, company_labels=False):
             legacy = {**view, "performance": summarize(view["records"], b_version=b_version, include_empty_retired=True)}
-            if existing not in (render(legacy, company_labels=True), render(legacy, company_labels=False)):
+            if existing not in (render(legacy, company_labels=True, legacy_layout=True), render(legacy, company_labels=False)):
                 raise
 
 
@@ -82,8 +84,10 @@ def run_study(
     evidence_loader=None, initialize: bool = False, expect_previous: str | None = None, protocol: str = PROTOCOL,
     combined: bool = False, archived_report: bytes | None = None,
 ) -> tuple[Path, dict]:
-    if mode not in (Mode.HISTORICAL_REPLAY, Mode.SYNTHETIC):
+    if mode == Mode.PROSPECTIVE and protocol != POSITION_PROTOCOL:
         raise ValueError("PAPER_PROSPECTIVE_DISABLED")
+    if mode not in (Mode.HISTORICAL_REPLAY, Mode.PROSPECTIVE, Mode.SYNTHETIC):
+        raise ValueError("PAPER_UNKNOWN_MODE")
     if initialize and (evidence_loader is None or start != target):
         raise ValueError("PAPER_EXPLICIT_INITIALIZATION_REQUIRES_FIRST_SESSION_INPUT")
     check_policy(policy, protocol)
@@ -109,7 +113,15 @@ def run_study(
             raise ValueError("PAPER_INPUT_TARGET_MISMATCH")
         if windows:
             _check_position_day(evidence, windows[index], windows[index + 1])
-        apply_day(records, evidence, identity, policy, protocol)
+        if mode == Mode.PROSPECTIVE:
+            source = evidence["source"]
+            if "available_at" not in source:
+                raise ValueError("PAPER_PROSPECTIVE_AVAILABILITY_REQUIRED")
+            available = datetime.fromisoformat(source["available_at"])
+            require_utc(available)
+            if not datetime.fromisoformat(source["observed_at"]) <= available <= datetime.now(UTC):
+                raise ValueError("PAPER_PROSPECTIVE_AVAILABILITY_MISMATCH")
+        apply_day(records, evidence, identity, policy, protocol, session_index=index)
 
     for index, day in enumerate(dates[:-1]):
         evidence, head = restore_day(directory / str(day) / "day.json", identity, head, str(day))
@@ -141,19 +153,34 @@ def run_study(
     return output, view
 
 
-def replay_iwb(
-    root: Path, start: date, target: date, *, directory: Path | None, policy_path: Path | None,
-    initialize: bool, expect_previous: str | None, protocol: str = PROTOCOL, combined: bool = False,
-) -> tuple[Path, str]:
-    policy = json.loads(read_artifact(policy_path)) if policy_path is not None else {}
+def replay_archive(
+    root: Path, start: date, target: date, *, directory: Path | None, policy: dict,
+    initialize: bool, expect_previous: str | None = None, protocol: str = PROTOCOL, combined: bool = False,
+    mode: Mode = Mode.HISTORICAL_REPLAY, available_at: datetime | None = None,
+) -> tuple[Path, dict]:
     position_policy = policy if protocol == POSITION_PROTOCOL else None
-    output, view = run_study(
-        root, Mode.HISTORICAL_REPLAY, start, target, policy,
+    return run_study(
+        root, mode, start, target, policy,
         evidence_loader=(
-            lambda symbols: load_day(directory, target, symbols, position_policy=position_policy)
+            lambda symbols: load_day(
+                directory, target, symbols, position_policy=position_policy,
+                available_at=available_at if mode == Mode.PROSPECTIVE else None,
+            )
         ) if directory is not None else None,
         initialize=initialize, expect_previous=expect_previous, protocol=protocol,
         combined=combined,
         archived_report=read_artifact(directory / "report.html") if combined and directory is not None else None,
+    )
+
+
+def replay_iwb(
+    root: Path, start: date, target: date, *, directory: Path | None, policy_path: Path | None,
+    initialize: bool, expect_previous: str | None, protocol: str = PROTOCOL, combined: bool = False,
+    mode: Mode = Mode.HISTORICAL_REPLAY, available_at: datetime | None = None,
+) -> tuple[Path, str]:
+    policy = json.loads(read_artifact(policy_path)) if policy_path is not None else {}
+    output, view = replay_archive(
+        root, start, target, directory=directory, policy=policy, initialize=initialize,
+        expect_previous=expect_previous, protocol=protocol, combined=combined, mode=mode, available_at=available_at,
     )
     return output, view["ledger_sha256"]

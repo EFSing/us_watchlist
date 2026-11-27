@@ -26,6 +26,7 @@ class Artifact:
     artifact_id: int
     digest: str
     run_id: int
+    created_at: datetime | None = None
 
 
 class GitHubArtifacts:
@@ -86,31 +87,52 @@ class GitHubArtifacts:
             for row in rows:
                 name = row["name"]
                 run = row.get("workflow_run") or {}
-                if (row["expired"] or not re.fullmatch(r"us-iwb-v1-(?:pool|daily)-\d{4}-\d{2}-\d{2}", name)
+                if (row["expired"] or not re.fullmatch(r"us-iwb-v1-(?:pool|daily|paper)-\d{4}-\d{2}-\d{2}", name)
                     or run.get("head_branch") != self.branch or run.get("repository_id") != run.get("head_repository_id")):
                     continue
                 if name in selected:
                     raise ValueError(f"GITHUB_ARTIFACT_IDENTITY_CONFLICT {name}")
-                selected[name] = Artifact(name, row["id"], row.get("digest") or "", run["id"])
+                created_at = datetime.fromisoformat(row["created_at"]) if row.get("created_at") else None
+                selected[name] = Artifact(name, row["id"], row.get("digest") or "", run["id"], created_at)
             if len(rows) < 100:
                 return selected
         raise ValueError("GITHUB_ARTIFACT_CATALOG_PAGE_LIMIT")
 
     def restore(self, artifact: Artifact, output: Path, names: set[str]) -> None:
+        self._restore(artifact, output, lambda entries: entries == names)
+
+    def restore_paper_bundle(self, artifact: Artifact, output: Path) -> None:
+        fixed = {"study.json", "paper-receipt.json", "combined-report.html", "paper-summary.txt"}
+
+        def valid_names(entries: set[str]) -> bool:
+            days = entries - fixed
+            return fixed <= entries and bool(days) and all(
+                re.fullmatch(r"days/[0-9]{4}-[0-9]{2}-[0-9]{2}\.json", name) for name in days
+            )
+
+        self._restore(artifact, output, valid_names)
+
+    def _restore(self, artifact: Artifact, output: Path, valid_names) -> None:
         body = self._read(f"{self.root}/{artifact.artifact_id}/zip")
         if artifact.digest != f"sha256:{sha256(body).hexdigest()}":
             raise ValueError(f"GITHUB_ARTIFACT_DIGEST_MISMATCH {artifact.name}")
         try:
             with ZipFile(BytesIO(body)) as archive:
                 entries = archive.infolist()
-                if (set(archive.namelist()) != names or len(entries) != len(names)
+                names = set(archive.namelist())
+                if (len(entries) != len(names) or not valid_names(names)
+                    or any(entry.orig_filename != entry.filename or entry.flag_bits & 1 for entry in entries)
                     or sum(entry.file_size for entry in entries) > MAX_ARTIFACT_BYTES):
                     raise ValueError(f"GITHUB_ARTIFACT_UNEXPECTED_ENTRIES {artifact.name}")
                 payloads = {entry.filename: archive.read(entry) for entry in entries}
-        except BadZipFile as error:
+        except (BadZipFile, RuntimeError) as error:
             raise ValueError(f"GITHUB_ARTIFACT_INVALID_ZIP {artifact.name}") from error
         for name, payload in payloads.items():
             publish_once(output / name, payload)
+
+
+def paper_workflow_variables() -> tuple[bool, str | None]:
+    return os.environ.get("US_IWB_PAPER_ENABLED") == "true", os.environ.get("US_IWB_PAPER_START_DATE")
 
 
 def write_workflow_outputs(outputs: dict[str, str]) -> None:
