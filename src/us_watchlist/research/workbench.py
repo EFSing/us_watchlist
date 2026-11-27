@@ -79,12 +79,24 @@ def _pulse(eligible: int, rows: list[_MarketRow]) -> MarketPulse:
 
 def _core_order(row: BCandidate) -> tuple:
     risk = row.risk_to_close if row.risk_to_close is not None else _LAST
-    if row.research.in_b_transition_cohort:
-        plan = row.research.trade.plan
-        return (0, risk, -plan.rr if plan is not None else _LAST, row.quote.symbol)
-    recovery = row.research.structure.recovery_ratio
-    distance = abs(recovery - Decimal("0.5")) if recovery is not None else _LAST
-    return (1, distance, risk, row.quote.symbol)
+    plan = row.research.trade.plan
+    return (
+        not row.fresh_turn, row.research.structure.stage != TRANSITION, not row.regime_aligned,
+        risk, -plan.rr if plan is not None else _LAST, row.quote.symbol,
+    )
+
+
+def _favored_styles(pulse: MarketPulse) -> set[str]:
+    medians = {group.style: group.change_20_median for group in pulse.styles if group.change_20_median is not None}
+    favored = set()
+    if (pulse.environment in {"普跌防守", "震荡整理"}
+            or ("防御" in medians and "成长" in medians and medians["防御"] > medians["成长"])):
+        favored.add("防御")
+    if medians:
+        strongest = max(medians, key=medians.__getitem__)
+        if pulse.environment == "多头趋势扩张" or medians[strongest] > 0:
+            favored.add(strongest)
+    return favored
 
 
 def _fallback_order(row: BCandidate) -> tuple:
@@ -181,10 +193,16 @@ def project_workbench(
                 position = (close - low) / (high - low) if high > low else Decimal("0.5")
             else:
                 position = None
-            candidates.append(BCandidate(evaluation, study, quote, platform, ratio, position, _chart(bars, history), risk))
+            candidates.append(BCandidate(
+                evaluation, study, quote, platform, ratio, position, _chart(bars, history), risk,
+                fresh_turn=structure.get("Fresh turn", True) is True,
+            ))
         elif (structure["Near platform"] is True and volume["Retest contracted"] is True
+              and structure.get("Trend MA50", True) is True and structure.get("Controlled pullback", True) is True
               and structure["Turn strength"] is False and ratio is not None):
             watch.append(BWatch(quote, platform, close / platform - 1, ratio))
-    core, other = _funnel(candidates)
+    pulse = _pulse(len(eligible), market)
+    favored = _favored_styles(pulse)
+    core, other = _funnel([replace(row, regime_aligned=row.quote.style in favored) for row in candidates])
     watch.sort(key=lambda row: (abs(row.distance_to_platform), row.retest_ratio, row.quote.symbol))
-    return Workbench(_pulse(len(eligible), market), core, other, tuple(watch[:10]), tuple(c_quotes))
+    return Workbench(pulse, core, other, tuple(watch[:10]), tuple(c_quotes))

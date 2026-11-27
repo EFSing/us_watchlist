@@ -21,7 +21,7 @@ from us_watchlist.integrations.replay_input import read_replay
 from us_watchlist.integrations.report_metadata import read_core_candidates
 from us_watchlist.reporting.replay_html import render_joint_replay
 from us_watchlist.reporting.workbench_html import chart_svg
-from us_watchlist.strategies.b_breakout_retest import BreakoutRetestShape
+from us_watchlist.strategies.b_breakout_retest import US_B_V2, BreakoutRetestShape
 from us_watchlist.strategies.contracts import StrategyInput
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -154,8 +154,8 @@ class WorkbenchTests(unittest.TestCase):
             _study("WST", transition=False, recovery=".45"),
         )
         view = observe_workbench(pool, inputs, b, (), ReplayResearch("test", "test", studies))
-        self.assertEqual([row.quote.symbol for row in view.core], ["UI", "LLYVK", "AAPL", "MSFT", "OGE", "JAN"])
-        self.assertEqual([(row.quote.symbol, row.same_issuer) for row in view.other], [("LLYVA", True), ("WST", False)])
+        self.assertEqual([row.quote.symbol for row in view.core], ["LLYVA", "UI", "MSFT", "AAPL", "JAN", "OGE"])
+        self.assertEqual([(row.quote.symbol, row.same_issuer) for row in view.other], [("LLYVK", True), ("WST", False)])
         self.assertFalse(any(row.supplemental for row in view.core))
 
     def test_supplemental_selection_and_prep_pool_have_independent_filters(self):
@@ -185,6 +185,38 @@ class WorkbenchTests(unittest.TestCase):
         for label in ("<svg", "price-band", "price-close", "price-ma20", "volumes", "guide platform", "guide trigger", "guide stop"):
             self.assertIn(label, svg)
 
+    def test_v2_core_prioritizes_freshness_then_stage_and_favored_style(self):
+        symbols = ("OGE", "MSFT", "CAT", "WST", "AEE", "AAPL")
+        pool, inputs = _inputs(symbols)
+        version = US_B_V2.version
+        evaluations = []
+        for symbol in symbols:
+            row = _evaluation(inputs, symbol)
+            evaluations.append(replace(row, signal=replace(row.signal, strategy=version),
+                                       structure=(*row.structure, ("Fresh turn", symbol != "AEE"))))
+        studies = tuple(replace(_study(symbol, transition=symbol != "AAPL", risk=risk),
+                                strategy_version=version.version)
+                        for symbol, risk in zip(symbols, (".04", ".03", ".01", ".02", ".01", ".05")))
+        view = observe_workbench(pool, inputs, ScreeningResult(version, tuple(evaluations)), (),
+                                 ReplayResearch("test", "test", studies))
+        self.assertEqual(view.pulse.environment, "普跌防守")
+        self.assertEqual([row.quote.symbol for row in view.core], ["OGE", "CAT", "WST", "MSFT", "AAPL", "AEE"])
+        self.assertEqual({row.quote.symbol for row in view.core if row.regime_aligned}, {"OGE", "AEE"})
+        self.assertFalse(view.core[-1].fresh_turn)
+
+    def test_v2_prep_pool_requires_both_guardrails(self):
+        symbols = ("PASS", "TREND", "PULLBACK", "TURN")
+        pool, inputs = _inputs(symbols)
+        rows = []
+        for symbol in symbols:
+            row = _evaluation(inputs, symbol, match=False, turn=symbol == "TURN")
+            rows.append(replace(row, structure=(
+                *row.structure, ("Trend MA50", symbol != "TREND"), ("Controlled pullback", symbol != "PULLBACK"),
+            )))
+        b = ScreeningResult(US_B_V2.version, tuple(rows))
+        view = observe_workbench(pool, inputs, b, (), ReplayResearch("test", "test", ()))
+        self.assertEqual([row.quote.symbol for row in view.watch], ["PASS"])
+
     def test_workbench_html_preserves_all_machine_record_bytes(self):
         data = read_replay(ROOT / "configs" / "b_demo" / "replay.toml")
         evidence, inputs = prepare_input(data)
@@ -205,4 +237,7 @@ class WorkbenchTests(unittest.TestCase):
         self.assertEqual([new.count(anchor) for anchor in anchors], [1, 1, 1])
         self.assertEqual([new.index(anchor) for anchor in anchors], sorted(new.index(anchor) for anchor in anchors))
         self.assertEqual(read_core_candidates(new.encode("utf-8")), (("DEMOA", "DEMOA", "未标注板块"),))
+        self.assertIn(f'id="{US_B_V2.version.version}-DEMOA"', new)
+        self.assertIn('class="pill signal-fresh">今日新转强', new)
+        self.assertNotIn("其他指标（见原始记录）", new)
         self.assertEqual(read_core_candidates(old.encode("utf-8")), ())

@@ -2,16 +2,17 @@
 
 from html import escape
 
-_RULES = (
-    ("us_breakout_retest_shape_v1", "B 突破回踩"),
-    ("us_c_trend_pullback_balanced_a_v1", "C 均衡"),
-)
+from us_watchlist.domain.paper import C_BALANCED, STRATEGIES
+from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2
 
 
 def render_email_summary(report: dict, *, core: tuple[tuple[str, str, str], ...] = ()) -> tuple[str, str, str]:
     day = report["trade_date"]
     status = "部分覆盖" if report["status"] == "PARTIAL_COVERAGE" else "完成"
-    rows = [(label, report["strategies"][version]["matches"]) for version, label in _RULES]
+    strategies = report["strategies"]
+    b_version = B_US_V2 if B_US_V2 in strategies else B_SHAPE_V1
+    b_label = "B 突破回踩" if b_version == B_SHAPE_V1 else STRATEGIES[b_version]
+    rows = [(b_label, strategies[b_version]["matches"]), (STRATEGIES[C_BALANCED], strategies[C_BALANCED]["matches"])]
     full_history = report.get("full_history_symbols")
     history_coverage = (
         f"{full_history:,}/{report['listed_equities']:,}"

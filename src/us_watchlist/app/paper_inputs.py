@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from us_watchlist.app.iwb_daily import verify_completed
-from us_watchlist.domain.paper import BASIS, B_VERSION, STRATEGIES, STRATEGY_LABELS, cohort, seed_sessions
+from us_watchlist.domain.paper import BASIS, B_VERSIONS, cohort, seed_sessions, valid_archive_strategies
 from us_watchlist.domain.replay_research import UNCONFIRMED, VOLUME_FIELDS
 from us_watchlist.integrations.iwb_holdings import read_holdings
 from us_watchlist.integrations.local_artifacts import read_artifact
@@ -21,7 +21,7 @@ def _candidate(row: dict) -> dict:
     trade = row["trade"]
     qualification = trade["qualification"]
     allowed = (("B_NUMERIC_QUALIFIED", "B_NUMERIC_REJECTED", "B_NUMERIC_UNAVAILABLE")
-               if version == B_VERSION else ("C_PRICE_RESEARCH",))
+               if version in B_VERSIONS else ("C_PRICE_RESEARCH",))
     if qualification not in allowed:
         raise ValueError(f"PAPER_UNRECOGNIZED_QUALIFICATION {symbol} {version}")
     levels = trade["plan"]
@@ -52,7 +52,7 @@ def _structure_origin(row: dict, evaluation: dict, signal_date: str) -> dict | N
     points = {name: [day, str(price)] for name, day, price in archived_points}
     if len(points) != len(archived_points):
         raise ValueError("PAPER_DUPLICATE_STRUCTURE_ANCHOR")
-    if row["strategy_version"] == B_VERSION:
+    if row["strategy_version"] in B_VERSIONS:
         ordered = ("L0", "H1", "L2")
         floor = "L2"
     else:
@@ -68,7 +68,7 @@ def _structure_origin(row: dict, evaluation: dict, signal_date: str) -> dict | N
     if (dates != sorted(set(dates)) or dates[-1] >= date.fromisoformat(signal_date)
             or any(not price.is_finite() or price <= 0 for price in prices)):
         raise ValueError("PAPER_INVALID_STRUCTURE_ORIGIN")
-    if row["strategy_version"] == B_VERSION:
+    if row["strategy_version"] in B_VERSIONS:
         valid = prices[0] < prices[2] < prices[1]
     else:
         valid = prices[1] < prices[2] < prices[3]
@@ -78,11 +78,11 @@ def _structure_origin(row: dict, evaluation: dict, signal_date: str) -> dict | N
 
 
 def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positions=False) -> tuple[list[dict], dict]:
-    versions = run["strategies"].keys()
-    if (not STRATEGIES.keys() <= versions <= STRATEGY_LABELS.keys()
+    versions = set(run["strategies"])
+    if (not valid_archive_strategies(versions)
             or versions != records.keys() - {"record-input", "record-research"}):
         raise ValueError("PAPER_SCREENING_STRATEGY_SET_MISMATCH")
-    archived_versions = tuple(version for version in STRATEGY_LABELS if version in versions)
+    archived_versions = sorted(versions)
     research = records["record-research"]
     identity = (run["trade_date"], run["observed_at"], run["input_sha256"], "iwb_yahoo_observation")
     keys = ("trade_date", "cutoff", "manifest_sha256", "mode")
@@ -118,7 +118,7 @@ def _screening(run: dict, records: dict, listed: tuple[str, ...], *, with_positi
         if with_positions:
             evaluation = evaluations[key]
             plan["structure_origin"] = _structure_origin(row, evaluation, run["trade_date"])
-            if plan["strategy_version"] == B_VERSION:
+            if plan["strategy_version"] in B_VERSIONS:
                 metrics = evaluation["structure"]
                 plan["breakout_date"] = metrics.get("Breakout date")
                 plan["platform"] = metrics.get("Platform")

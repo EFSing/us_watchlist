@@ -5,7 +5,7 @@ from hashlib import sha256
 from html.parser import HTMLParser
 
 from us_watchlist.domain.models import MarketSnapshot
-from us_watchlist.domain.paper import STRATEGIES, STRATEGY_LABELS
+from us_watchlist.domain.paper import STRATEGY_LABELS, valid_archive_strategies
 
 
 class _Records(HTMLParser):
@@ -42,7 +42,8 @@ def read_report_records(body: bytes, report_sha256: str) -> dict:
     parser = _Records()
     parser.feed(body.decode("utf-8"))
     parser.close()
-    if not (STRATEGIES.keys() | {"record-research"}) <= parser.records.keys():
+    if ("record-research" not in parser.records
+            or not valid_archive_strategies(parser.records.keys() - {"record-input", "record-research"})):
         raise ValueError("PAPER_MISSING_REPORT_RECORD")
     return parser.records
 

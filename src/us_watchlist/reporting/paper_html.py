@@ -5,9 +5,11 @@ from html import escape
 
 from us_watchlist.domain.company_catalog import catalog_sector_style, company_name
 from us_watchlist.domain.paper import POSITION_PROTOCOL, STRATEGY_LABELS, Mode, Status
+from us_watchlist.domain.screening import B_SHAPE_V1
 
 _LABELS = {
     **STRATEGY_LABELS, Status.PENDING: "待开盘检查", Status.NOT_FILLED: "未成交",
+    B_SHAPE_V1: "B 突破回踩",  # Preserve the rendered bytes of archived paper views.
     Status.OPEN: "模拟持仓", Status.CLOSED: "已退出", Status.UNAVAILABLE: "无法确认",
     "B_NUMERIC_QUALIFIED": "B 数值门槛通过", "B_NUMERIC_REJECTED": "B 数值门槛未通过",
     "B_NUMERIC_UNAVAILABLE": "B 数值门槛缺证",

@@ -12,16 +12,18 @@ from us_watchlist.integrations.local_artifacts import publish_once
 from us_watchlist.integrations.replay_input import read_replay
 from us_watchlist.reporting.replay_html import render_joint_replay
 from us_watchlist.research.pullback import compare_b_volume
-from us_watchlist.research.replay_observations import REFERENCE_COMMIT, VERSION, observe_candidate
+from us_watchlist.research.replay_observations import REFERENCE_COMMIT, observe_candidate, research_version
 from us_watchlist.research.workbench import project_workbench
-from us_watchlist.strategies.b_breakout_retest import BreakoutRetestShape
+from us_watchlist.strategies.b_breakout_retest import US_B_V2, BreakoutRetestShape, BreakoutRule
 from us_watchlist.strategies.c_trend_pullback import BALANCED_A, TrendPullback
 from us_watchlist.strategies.contracts import StrategyInput
 
 
-def evaluate_joint(inputs: StrategyInput) -> tuple[ScreeningResult, tuple[ScreeningResult, ...]]:
+def evaluate_joint(
+    inputs: StrategyInput, *, b_rule: BreakoutRule = US_B_V2,
+) -> tuple[ScreeningResult, tuple[ScreeningResult, ...]]:
     return (
-        evaluate(BreakoutRetestShape(), inputs),
+        evaluate(BreakoutRetestShape(b_rule), inputs),
         (evaluate(TrendPullback(BALANCED_A), inputs),),
     )
 
@@ -45,7 +47,8 @@ def observe_joint(
             row, dates, series_by_symbol[row.symbol], is_b=is_b, source_gap=source_gaps.get(row.symbol, ""),
         )
         (b_rows if is_b else c_rows).append(observed)
-    return ReplayResearch(VERSION, REFERENCE_COMMIT, (*compare_b_volume(tuple(b_rows)), *c_rows))
+    return ReplayResearch(research_version(b.strategy.version), REFERENCE_COMMIT,
+                          (*compare_b_volume(tuple(b_rows)), *c_rows))
 
 
 def observe_workbench(

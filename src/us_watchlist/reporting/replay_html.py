@@ -6,19 +6,22 @@ from dataclasses import asdict, dataclass
 from html import escape
 
 from us_watchlist.domain.replay_research import CandidateResearch, ReplayResearch
-from us_watchlist.domain.screening import Evaluation, Metrics, ReplayEvidence, ScreeningResult
+from us_watchlist.domain.screening import B_SHAPE_V1, B_US_V2, B_VERSIONS, Evaluation, Metrics, ReplayEvidence, ScreeningResult
 from us_watchlist.domain.workbench import QuoteSummary, Workbench
 from us_watchlist.reporting.replay_assets import RESEARCH_STYLE, SCRIPT, STYLE, WORKBENCH_STYLE
 from us_watchlist.reporting.replay_labels import REASON, STATUS, data_gap, metric_cells
 from us_watchlist.reporting.research_html import candidate_research, research_definitions, research_summary, workbench_research
-from us_watchlist.reporting.workbench_html import B_VERSION, b_sections, market_pulse, quote_heading
+from us_watchlist.reporting.workbench_html import b_sections, market_pulse, quote_heading
 
 
-_B = B_VERSION
 _RULES = {
-    _B: (
+    B_SHAPE_V1: (
         "B · 76 日突破回踩形态", "形态匹配",
         "在 76 个交易日的窗口内检查首次合格放量突破，以及其后的回踩位置、缩量和收盘转强。",
+    ),
+    B_US_V2: (
+        "B · 美股突破回踩 V2", "形态匹配",
+        "在 76 个交易日内检查首次通过 ATR 涨幅与放量门槛的突破，并核对回踩、MA50 趋势、峰值回撤和收盘转强。",
     ),
     "us_c_trend_pullback_balanced_a_v1": (
         "C · 均衡规则", "研究规则匹配",
@@ -162,7 +165,7 @@ def _overview(
             cards.append(f'<a href="#{rule.version}"><span>{rule.label}</span>'
                          f'<strong>{count}</strong><small>{rule.match_label} · {note}</small></a>')
         sections = f'<div class="decision-grid" style="--rule-count:{len(rules)}">{"".join(cards)}</div>'
-        study = research_summary(research, _B) + "\n" if research is not None else ""
+        study = research_summary(research, rules[0].version) + "\n" if research is not None else ""
     return f"""<section id="overview" class="panel">
 <div class="section-head"><h2>今日总览</h2>{_pill(f"数据状态 · {status}", warning=status != "完成")}</div>
 {study}<div class="overview-grid">
@@ -193,7 +196,7 @@ def _candidates(
     groups = []
     if workbench is not None:
         core = "".join(
-            f'<a href="#{_B}-{escape(row.quote.symbol)}">{escape(row.quote.symbol)} '
+            f'<a href="#{rules[0].version}-{escape(row.quote.symbol)}">{escape(row.quote.symbol)} '
             f'<small>{escape(row.quote.name)} · {row.quote.sector}</small></a>' for row in workbench.core
         ) or '<span class="muted">本轮无核心精选</span>'
         groups.append(f'<div class="candidate-group"><h3>今日核心精选</h3><div class="ticker-list">{core}</div></div>')
@@ -204,7 +207,7 @@ def _candidates(
         ) or f'<span class="muted">{STATUS[rule.status] if rule.status != "PARTIAL_COVERAGE" else "本轮无匹配"}</span>'
         label = rule.label
         if workbench is not None:
-            if rule.version == _B:
+            if rule.version in B_VERSIONS:
                 label = "B 全部形态匹配"
             else:
                 label = "C 研究匹配 · " + rule.label.removeprefix("C · ")
@@ -256,7 +259,7 @@ def _legacy_card_body(row: Evaluation, *, is_b: bool) -> str:
 
 
 def _card(row: Evaluation, rule: _Rule, study: CandidateResearch | None, quote: QuoteSummary | None = None) -> str:
-    is_b = rule.result.strategy.version == _B
+    is_b = rule.result.strategy.version in B_VERSIONS
     heading = "h3" if is_b else "h4"
     symbol = escape(row.symbol)
     if study is None:
@@ -403,7 +406,8 @@ def render_replay(
         else:
             watch_symbols = frozenset(row.quote.symbol for row in workbench.watch)
             diagnostics = _other_results(rules[0], exclude=watch_symbols)
-            sections = b_sections(workbench, diagnostics, failed=rules[0].result.error is not None)
+            sections = b_sections(workbench, diagnostics, version=rules[0].version,
+                                  failed=rules[0].result.error is not None)
     if c_rules:
         links.append(("c-results", "C 研究"))
         if workbench is None:

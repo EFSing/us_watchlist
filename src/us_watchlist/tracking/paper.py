@@ -6,7 +6,8 @@ from decimal import Decimal
 from hashlib import sha256
 
 from us_watchlist.domain.paper import (
-    B_VERSION, POSITION_PROTOCOL, PROTOCOL, RETIRED_STRATEGIES, STRATEGIES, Status, cohort, needs_structure,
+    B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
+    Status, cohort, needs_structure,
 )
 from us_watchlist.tracking.paper_position import PositionIndicators, close_position
 
@@ -223,17 +224,19 @@ def apply_day(records: dict, day: dict, study_id: str, policy: dict, protocol: s
             _event(row, day, Status.PENDING, "PLAN_CREATED")
 
 
-def summarize(records: dict, *, include_empty_retired: bool = False) -> list[dict]:
-    groups = {version: [] for version in STRATEGIES}
+def summarize(records: dict, *, b_version: str = B_VERSION, include_empty_retired: bool = False) -> list[dict]:
+    groups = {b_version: [], C_BALANCED: []}
     planned = {row["plan"]["strategy_version"] for row in records.values()}
-    groups.update({version: [] for version in RETIRED_STRATEGIES if include_empty_retired or version in planned})
+    groups.update({version: [] for version in sorted((planned & B_VERSIONS) - {b_version})})
+    if include_empty_retired or C_CONSERVATIVE in planned:
+        groups[C_CONSERVATIVE] = []
     groups.update({name: [] for name in (
         "B_NUMERIC_QUALIFIED", "B_NUMERIC_REJECTED", "B_NUMERIC_UNAVAILABLE", "WARNING", "CLEAR", "UNKNOWN",
     )})
     for row in records.values():
         plan = row["plan"]
         groups[plan["strategy_version"]].append(row)
-        if plan["strategy_version"] == B_VERSION:
+        if plan["strategy_version"] in B_VERSIONS:
             groups[plan["qualification"]].append(row)
         groups[plan["risk_warning"]].append(row)
     stats = []

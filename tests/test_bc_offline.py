@@ -9,9 +9,9 @@ from unittest.mock import patch
 
 from us_watchlist.app.bc_offline import evaluate_joint, run_bc_offline
 from us_watchlist.app.replay import prepare_replay
-from us_watchlist.domain.paper import RETIRED_STRATEGIES
+from us_watchlist.domain.paper import C_CONSERVATIVE
 from us_watchlist.reporting.replay_html import render_joint_replay
-from us_watchlist.strategies.b_breakout_retest import BreakoutRetestShape
+from us_watchlist.strategies.b_breakout_retest import US_B_V2, BreakoutRetestShape
 from us_watchlist.strategies.c_trend_pullback import BALANCED_A, TrendPullback
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -39,7 +39,7 @@ class JointOfflineTests(unittest.TestCase):
             html = path.read_text(encoding="utf-8")
             results = embedded_records(html)
             expected = {
-                BreakoutRetestShape.version.version: "DEMOA",
+                US_B_V2.version.version: "DEMOA",
                 TrendPullback(BALANCED_A).version.version: "DEMOB",
             }
             b, c = evaluate_joint(self.inputs)
@@ -58,14 +58,14 @@ class JointOfflineTests(unittest.TestCase):
 
     def test_historical_result_keeps_its_rule_label_and_deduplicated_count(self):
         b, (balanced,) = evaluate_joint(self.inputs)
-        retired = replace(balanced, strategy=replace(balanced.strategy, version=next(iter(RETIRED_STRATEGIES))))
+        retired = replace(balanced, strategy=replace(balanced.strategy, version=C_CONSERVATIVE))
         html = render_joint_replay(self.evidence, b, (balanced, retired))
         self.assertIn("C · 保守规则", html)
         self.assertIn("C 2 套规则合计 1 只（按代码去重）。", html)
 
     def test_failed_strategy_remains_visible_and_other_strategy_still_reports_matches(self):
         for failing, valid in ((BreakoutRetestShape, TrendPullback(BALANCED_A)),
-                               (TrendPullback, BreakoutRetestShape())):
+                               (TrendPullback, BreakoutRetestShape(US_B_V2))):
             with self.subTest(failing=failing), TemporaryDirectory(dir=self.temp) as directory:
                 with patch.object(failing, "evaluate", side_effect=RuntimeError("injected </script> fault")):
                     path = run_bc_offline(CONFIG, Path(directory))

@@ -12,9 +12,11 @@ from unittest.mock import patch
 from us_watchlist.app.iwb_paper import run_study
 from us_watchlist.app.paper_inputs import _screening, _structure_origin, load_day
 from us_watchlist.domain.paper import (
-    BASIS, B_VERSION, POSITION_PROTOCOL, PROTOCOL, RETIRED_STRATEGIES, STRATEGIES, Mode, Status, check_policy,
+    BASIS, B_VERSION, B_VERSIONS, C_BALANCED, C_CONSERVATIVE, POSITION_PROTOCOL, PROTOCOL,
+    STRATEGIES, Mode, Status, check_policy,
 )
-from us_watchlist.domain.replay_research import VOLUME_FIELDS
+from us_watchlist.domain.replay_research import REFERENCE_V1, REFERENCE_V2, VOLUME_FIELDS
+from us_watchlist.domain.screening import B_SHAPE_V1
 from us_watchlist.integrations.paper_archive import read_report_records
 from us_watchlist.integrations.xnys import next_session, regular_windows
 from us_watchlist.reporting.paper_html import render_paper
@@ -25,8 +27,8 @@ START = date(2026, 1, 5)
 T1 = date(2026, 1, 6)
 T2 = date(2026, 1, 7)
 T3 = date(2026, 1, 8)
-_, BALANCED = STRATEGIES
-CONSERVATIVE, = RETIRED_STRATEGIES
+BALANCED = C_BALANCED
+CONSERVATIVE = C_CONSERVATIVE
 RULE = {"min_actual_rr": "2", "min_target_upside": "0.05", "max_open_premium": "0.08", "exit_model": "FIXED_STOP"}
 POLICY = {
     B_VERSION: {"B_NUMERIC_QUALIFIED:UNKNOWN": RULE},
@@ -36,7 +38,7 @@ SIGNAL_BAR = ("100", "104", "96", "101")
 
 
 def candidate(symbol, strategy=B_VERSION, *, rejected=False, warning="UNKNOWN"):
-    qualification = "C_PRICE_RESEARCH" if strategy != B_VERSION else (
+    qualification = "C_PRICE_RESEARCH" if strategy not in B_VERSIONS else (
         "B_NUMERIC_REJECTED" if rejected else "B_NUMERIC_QUALIFIED"
     )
     return {
@@ -173,7 +175,7 @@ class PaperTests(unittest.TestCase):
         self.assertEqual(report.count("<main>"), 1)
         self.assertIn('href="#paper-research"', report)
         self.assertIn("B/C 逐股候选", report)
-        self.assertIn("ALFA · B 突破回踩", report)
+        self.assertIn("ALFA · B 美股突破回踩 V2", report)
         self.assertIn("BRAV · C 均衡", report)
         self.assertIn("浮动 R", report)
         self.assertIn("当前模拟持仓<strong>2 只</strong>", report)
@@ -521,16 +523,16 @@ class PaperTests(unittest.TestCase):
                     check_policy({CONSERVATIVE: {"C_PRICE_RESEARCH:CLEAR": rule}}, protocol)
 
     def test_ledger_advances_from_three_rule_archive_to_two_rule_archive(self):
-        def from_archive(day, versions, matched=None):
+        def from_archive(day, versions, research_version, matches):
             run, records = screening_archive(day, versions)
-            if matched:
+            for matched in matches:
                 run["strategies"][matched]["matches"] = 1
                 records[matched]["evaluations"][0]["matched"] = True
-                archived = candidate("ALFA", matched, warning="CLEAR")
+                archived = candidate("ALFA", matched)
                 records["record-research"]["candidates"].append({
                     **archived, "trade": {"qualification": archived["qualification"], "plan": archived["levels"],
                                           "qualification_reason": None, "missing_reason": None,
-                                          "inputs": [("stop_risk_warning", False)]},
+                                          "inputs": [] if matched in B_VERSIONS else [("stop_risk_warning", False)]},
                     "volume": {"measures": archived["volume"]},
                 })
             scripts = []
@@ -540,22 +542,34 @@ class PaperTests(unittest.TestCase):
             body = "".join(scripts).encode()
             plans, grid = _screening(run, read_report_records(body, sha256(body).hexdigest()), ("ALFA",))
             data = evidence(day, plans, bars={"ALFA": SIGNAL_BAR})
+            data["source"]["research_version"] = research_version
             data["quotes"]["ALFA"]["structures"] = {version: rows["ALFA"] for version, rows in grid.items()}
             return data
 
-        first = from_archive(START, (*STRATEGIES, CONSERVATIVE), CONSERVATIVE)
-        second = from_archive(T1, STRATEGIES, BALANCED)
-        self.assertEqual(set(first["quotes"]["ALFA"]["structures"]), {*STRATEGIES, CONSERVATIVE})
+        old_versions = (B_SHAPE_V1, BALANCED, CONSERVATIVE)
+        first = from_archive(START, old_versions, REFERENCE_V1, (B_SHAPE_V1, CONSERVATIVE))
+        second = from_archive(T1, STRATEGIES, REFERENCE_V2, (B_VERSION, BALANCED))
+        self.assertEqual(set(first["quotes"]["ALFA"]["structures"]), set(old_versions))
         self.assertEqual(second["quotes"]["ALFA"]["structures"].keys(), STRATEGIES.keys())
         _, initial = run_day(self.root, first, initialize=True, policy={})
+        self.assertEqual(initial["performance"][0]["group"], B_SHAPE_V1)
         output, advanced = run_day(self.root, second, policy={}, expect_previous=initial["ledger_sha256"])
         _, restored = run_study(self.root, Mode.SYNTHETIC, START, T1, {})
         self.assertEqual(restored, advanced)
         self.assertEqual({row["plan"]["strategy_version"]: row["status"] for row in advanced["records"].values()},
-                         {CONSERVATIVE: Status.UNAVAILABLE, BALANCED: Status.PENDING})
-        retired_stat = next(row for row in advanced["performance"] if row["group"] == CONSERVATIVE)
-        self.assertEqual(retired_stat[Status.UNAVAILABLE], 1)
+                         {CONSERVATIVE: Status.UNAVAILABLE, B_SHAPE_V1: Status.UNAVAILABLE,
+                          BALANCED: Status.PENDING, B_VERSION: Status.PENDING})
+        groups = {row["group"]: row for row in advanced["performance"]}
+        self.assertEqual(groups[CONSERVATIVE][Status.UNAVAILABLE], 1)
+        self.assertEqual(groups["B_NUMERIC_QUALIFIED"][Status.PENDING], 1)
+        self.assertEqual(groups["B_NUMERIC_QUALIFIED"][Status.UNAVAILABLE], 1)
         self.assertIn("<th scope='row'>C 保守</th>", (output / "paper-report.html").read_text(encoding="utf-8"))
+
+    def test_each_b_version_can_use_its_own_policy(self):
+        for protocol, rule in ((PROTOCOL, RULE),
+                               (POSITION_PROTOCOL, position_policy()[B_VERSION]["B_NUMERIC_QUALIFIED:UNKNOWN"])):
+            with self.subTest(protocol=protocol):
+                check_policy({version: {"B_NUMERIC_QUALIFIED:UNKNOWN": rule} for version in B_VERSIONS}, protocol)
 
     def test_restore_reuses_byte_identical_legacy_view_with_empty_retired_row(self):
         output, view = run_day(self.root, evidence(START), initialize=True, policy={})
@@ -591,6 +605,7 @@ class PaperTests(unittest.TestCase):
     def test_screening_rejects_missing_active_unknown_and_disagreeing_strategy_sets(self):
         for receipt_versions, embedded_versions in (
             ((B_VERSION,), (B_VERSION,)),
+            ((*STRATEGIES, B_SHAPE_V1), (*STRATEGIES, B_SHAPE_V1)),
             ((*STRATEGIES, "unknown"), (*STRATEGIES, "unknown")),
             ((*STRATEGIES, CONSERVATIVE), tuple(STRATEGIES)),
             (tuple(STRATEGIES), (*STRATEGIES, CONSERVATIVE)),
